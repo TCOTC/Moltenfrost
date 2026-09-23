@@ -1,0 +1,19 @@
+# 两台机器（Windows 与 macOS）共用同一个仓库，统一按 LF 入库，
+# 避免各自按本机 core.autocrlf 处理而产生整文件级别的假改动与同步冲突。
+# 本文件优先于各机器的 git config，因此 Windows 上检出得到的也是 LF。
+# 见 AGENTS.md「两台机器各导自己的平台」。
+* text=auto eol=lf
+
+# 二进制资源不参与换行符转换。text=auto 的自动探测对极端情况可能误判为文本，
+# 一旦误判，eol=lf 会改写行尾并损坏文件，所以显式声明。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.avif binary
+*.ogg binary
+*.mp3 binary
+*.wav binary
+*.ttf binary
+*.otf binary
+*.glb binary

@@ -1,0 +1,157 @@
+熔霜 · Moltenfrost 专有许可，第1版
+
+2026年9月
+
+Copyright (c) 2026 Jeffrey Chen. 保留所有权利。
+SPDX-License-Identifier: LicenseRef-Proprietary
+
+您对“本软件”的复制、使用、修改及分发受熔霜 · Moltenfrost 专有许可，第1版（“本许可”）的如下条款的约束：
+
+“本软件”不是开源软件，也不适用任何 OSI 认可的开源许可证。“本许可”仅授予第 1 条中明确列出的权利；未明确授予的权利，一律由“版权所有者”保留。
+
+0. 定义
+
+“本软件”是指本仓库内由“版权所有者”创作的源代码与脚本、场景与配置文件、美术、音频、字体与 UI 素材、文档与设计资料与检索记录。
+
+“版权所有者”是指 Jeffrey Chen。
+
+“第三方内容”是指“本软件”中包含的、由“版权所有者”之外的主体创作的部分，包括 Godot 引擎、第三方插件、字体、图标与音效。
+
+“您”是指行使“本许可”所授予权利的主体。
+
+1. 授予许可
+
+在遵守“本许可”全部条款的前提下，“版权所有者”授予您非独占性的、免费的、不可转让的、可撤销的许可，允许您：
+
+（a）通过托管平台在线浏览、阅读“本软件”；
+（b）使用托管平台的内置功能（例如 Fork、Download ZIP）在平台内复制“本软件”，用于个人学习与阅读；
+（c）在评论、文章或视频中引用“本软件”，须注明来源并给出仓库链接，且引用部分不得构成对原作的实质性替代。
+
+上述（a）至（c）之外的使用，均需事先取得“版权所有者”的书面许可。
+
+2. 分发限制
+
+未经“版权所有者”事先书面许可，您不得：
+
+（a）复制、分发、公开传播、转授权、出租或出售“本软件”及其修改版本；
+（b）修改、翻译、演绎“本软件”，或以“本软件”为基础创作衍生作品；
+（c）将“本软件”的任何部分用于商业产品、商业服务或其他营利活动；
+（d）将“本软件”或其衍生形式提交至应用商店、游戏发行平台或素材市场；
+（e）移除、遮盖或更改“本软件”中的版权、商标及其他权利声明；
+（f）将“本软件”用于训练机器学习模型或人工智能系统，或用于构建数据集。
+
+3. 无商标许可
+
+“本许可”不授予对“熔霜”“Moltenfrost”及本项目 Logo 的商标权、商号权或名称使用权。“版权所有者”保留上述全部权利。
+
+引用或 Fork“本软件”，不得以任何方式暗示与“版权所有者”存在官方关联、赞助或背书关系。
+
+4. 第三方内容
+
+“第三方内容”不适用“本许可”，各自适用其原始许可条款。清单见 THIRD_PARTY.md，许可文本原件存放于 LICENSES/ 目录。
+
+5. 贡献
+
+“本软件”不接受外部的代码贡献，未经邀请的 Pull Request 不予合并。
+
+参与“本软件”代码开发的人员，须就其贡献签署版权转让或授权文件，以保证版权归属的完整与单一。
+
+6. 免责声明与责任限制
+
+“本软件”按“现状”提供，不附带任何明示或默示的担保，包括但不限于适销性、特定用途适用性与不侵权的担保。
+
+在任何情况下，“版权所有者”均不对因使用或无法使用“本软件”而产生的任何直接、间接、附带或后果性损失承担责任，不论因何种原因导致或基于何种法律理论。
+
+7. 许可终止
+
+您违反“本许可”任何条款的，“本许可”授予您的全部权利自动终止，无需另行通知。终止之后，您应立即停止使用“本软件”，并删除全部副本。
+
+8. 适用法律
+
+“本许可”适用中华人民共和国法律。因“本许可”产生的争议，由“版权所有者”住所地有管辖权的人民法院管辖。
+
+9. 语言
+
+“本许可”以中英文双语表述，英文译文仅供参考；中英文如有歧义，以中文版本为准。
+
+条款结束
+
+Moltenfrost Proprietary License, Version 1
+
+September 2026
+
+Copyright (c) 2026 Jeffrey Chen. All rights reserved.
+SPDX-License-Identifier: LicenseRef-Proprietary
+
+English translation for reference only; the Chinese version controls.
+
+Your reproduction, use, modification and distribution of the Software shall be subject to the Moltenfrost Proprietary License, Version 1 (this License) with the following terms and conditions:
+
+The Software is not open source and is not licensed under any OSI-approved license. Only the rights expressly set out in Section 1 are granted; all rights not expressly granted are reserved by the Copyright Holder.
+
+0. Definition
+
+Software means the source code and scripts, scenes and configuration files, artwork, audio, fonts and UI assets, and documentation and design materials and research records in this repository which are created by the Copyright Holder.
+
+Copyright Holder means Jeffrey Chen.
+
+Third-Party Material means the parts of the Software created by entities other than the Copyright Holder, including the Godot engine, third-party plugins, fonts, icons and audio.
+
+You means the entity exercising the rights granted under this License.
+
+1. Grant of License
+
+Subject to the terms and conditions of this License, the Copyright Holder grants to you a non-exclusive, royalty-free, non-transferable, revocable license to:
+
+(a) view and read the Software on the hosting platform;
+(b) use the hosting platform's built-in features (for example Fork, Download ZIP) to copy the Software within the platform for personal study and reading;
+(c) quote the Software in commentary, articles or videos, provided that you attribute the source and link to this repository, and provided that the quotation does not substitute for the original.
+
+Any use other than (a) to (c) requires the prior written permission of the Copyright Holder.
+
+2. Distribution Restriction
+
+Without the prior written permission of the Copyright Holder, you may not:
+
+(a) reproduce, distribute, publicly transmit, sublicense, rent or sell the Software or its modified versions;
+(b) modify, translate or adapt the Software, or create derivative works based on it;
+(c) use any part of the Software in a commercial product, commercial service or other revenue-generating activity;
+(d) submit the Software or a derivative of it to any app store, game store or asset marketplace;
+(e) remove, obscure or alter any copyright, trademark or other rights statement in the Software;
+(f) use the Software to train machine learning models or artificial intelligence systems, or to build datasets.
+
+3. No Trademark License
+
+No trademark license is granted to use the trade names, trademarks or product names “熔霜”, “Moltenfrost” or the project logo. The Copyright Holder retains all such rights.
+
+Quotation or forking of the Software shall not imply any official affiliation, sponsorship or endorsement by the Copyright Holder.
+
+4. Third-Party Material
+
+Third-Party Material is not licensed under this License and shall be subject to its own terms. See THIRD_PARTY.md; the original license texts are kept in the LICENSES/ directory.
+
+5. Contribution
+
+The Software does not accept external code contributions, and unsolicited pull requests will not be merged.
+
+Individuals who develop code for the Software shall sign an assignment or authorization covering their contributions, so that copyright ownership remains complete and undivided.
+
+6. Disclaimer of Warranty and Limitation of Liability
+
+THE SOFTWARE IS PROVIDED ON AN “AS IS” BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE TO YOU FOR ANY DAMAGES, INCLUDING, BUT NOT LIMITED TO ANY DIRECT, INDIRECT, SPECIAL OR CONSEQUENTIAL DAMAGES ARISING FROM YOUR USE OR INABILITY TO USE THE SOFTWARE, NO MATTER HOW IT IS CAUSED OR BASED ON WHICH LEGAL THEORY, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+7. Termination
+
+If you breach any term of this License, all rights granted to you under this License shall terminate automatically, without notice. Upon termination you shall stop using the Software and delete all copies.
+
+8. Governing Law
+
+This License shall be governed by the laws of the People's Republic of China. Any dispute arising from this License shall be subject to the jurisdiction of the competent people's court at the domicile of the Copyright Holder.
+
+9. Language
+
+THIS LICENSE IS WRITTEN IN BOTH CHINESE AND ENGLISH. THE ENGLISH TRANSLATION IS PROVIDED FOR REFERENCE ONLY; IN THE CASE OF DIVERGENCE BETWEEN THE CHINESE AND ENGLISH VERSIONS, THE CHINESE VERSION SHALL PREVAIL.
+
+END OF THE TERMS AND CONDITIONS

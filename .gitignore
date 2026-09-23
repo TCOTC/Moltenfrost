@@ -1,0 +1,19 @@
+# Godot 的导入缓存与编辑器状态
+.godot/
+
+# 导出产物（保留目录本身，内容不入库）
+build/windows/*
+build/macos/*
+!build/windows/.gitkeep
+!build/macos/.gitkeep
+
+# 签名与公证材料，绝对不要提交
+certs/
+*.p12
+*.mobileprovision
+*.provisionprofile
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+desktop.ini
