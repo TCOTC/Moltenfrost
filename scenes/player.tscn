@@ -9,30 +9,37 @@ properties/0/replication_mode = 1
 properties/1/path = NodePath(".:sync_time")
 properties/1/spawn = false
 properties/1/replication_mode = 1
+properties/2/path = NodePath(".:yaw")
+properties/2/spawn = true
+properties/2/replication_mode = 1
+properties/3/path = NodePath(".:pitch")
+properties/3/spawn = false
+properties/3/replication_mode = 1
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
-radius = 0.4
-height = 1.8
-
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_1"]
-radius = 0.4
-height = 1.8
+radius = 0.35
+height = 1.75
 
 [node name="Player" type="CharacterBody3D"]
 script = ExtResource("1_player")
 
+[node name="Collision" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.875, 0)
+shape = SubResource("CapsuleShape3D_1")
+
 [node name="Visual" type="Node3D" parent="."]
 
-[node name="Mesh" type="MeshInstance3D" parent="Visual"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
-mesh = SubResource("CapsuleMesh_1")
+[node name="Body" type="Node3D" parent="Visual"]
 
-[node name="Collision" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
-shape = SubResource("CapsuleShape3D_1")
+[node name="Head" type="Node3D" parent="Visual"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.62, 0)
+
+[node name="Camera" type="Camera3D" parent="Visual/Head"]
+near = 0.05
+far = 400.0
+fov = 62.0
+
+[node name="ViewModel" type="Node3D" parent="Visual/Head/Camera"]
 
 [node name="Sync" type="MultiplayerSynchronizer" parent="."]
 replication_config = SubResource("SceneReplicationConfig_1")
-
-[node name="Camera" type="Camera3D" parent="."]
-top_level = true

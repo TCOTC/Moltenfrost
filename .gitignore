@@ -17,3 +17,7 @@ certs/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 开发期截图（--capture 的产物），随时可重建
+build/shots/
+build/*.log

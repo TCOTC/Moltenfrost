@@ -70,3 +70,34 @@
 - 这台机器到 GitHub CDN 约 0.11 MiB/s，且开多连接并不更快（瓶颈是单 IP 限速，不是连接数）。325 MiB 约需 50 分钟。
 - 清华 / 上交 / 中科大 / TuxFamily 四个镜像都没有同步这个文件，只能走 GitHub。
 - Godot 认的模板目录名是 `<版本>.<渠道>`，例如 `4.7.2.stable`；Windows 在 `%APPDATA%\Godot\export_templates\`，macOS 在 `~/Library/Application Support/Godot/export_templates/`。
+
+## `add_child` 会立刻执行该节点的 `_ready`（2026-09-24 实测）
+
+- 运行时构建的带脚本节点（`Area3D` + `set_script`）如果先 `add_child` 再补子节点，
+  脚本的 `_ready` 里访问 `$Mesh` / `$Collision` 会以 `Node not found: "Mesh"` 失败
+  （后跟一句 `Invalid assignment ... on a base object of type 'null instance'`）。
+- 正确顺序：建全部子节点 → `set_script` → `set` 导出属性 → 最后 `add_child`。
+- 同类坑：这类节点的 `_ready` **不能**用 `Net.is_server()` 决定「要不要处理」，
+  因为它先于 `main.gd` 就绪，那时会话还没建立，而离线状态同样被判为服务端。
+  改在 `_physics_process` 里每帧判断。
+- 另一种方案是 `call_deferred("add_child", node)`，但那会让“何时进入场景树”变得不直观，不推荐。
+
+## 自己写的命令行解析同样会静默忽略未知参数（2026-09-24 踩过）
+
+- `scripts/net/net_cmdline.gd` 是一张白名单：新加参数忘了登记，程序会「正常」启动但行为不对，
+  日志里看不出异常。实测：`--capture` 漏登记，截图工具永远不启动，
+  而画面就是一个一直开着不动的窗口（很容易误判为卡死）。
+- 已加防护：对 `--` 之后的未知参数 `push_warning`。仍要记得登记。
+- 查这类问题的第一步是看启动日志里的 `[session] 启动参数：{...}`，它打印的就是解析结果。
+
+## Area3D 能改写的物理量（2026-09-24 查 4.7 文档）
+
+- 可用：`gravity` / `gravity_direction` / `gravity_point` 系列（配 `gravity_space_override`）、
+  `linear_damp` 与 `angular_damp`（配各自的 `*_space_override`）、`priority`（多个区域重叠时的处理顺序）。
+- **没有内建的浮力属性**。`wind_force_magnitude` / `wind_source_path` 只对 `SoftBody3D` 生效，
+  对 RigidBody3D 与 CharacterBody3D 无效，因此也不能拿它当水流。
+- 结论：水的阻力用 `linear_damp_space_override = REPLACE` 配一个较大的 `linear_damp` 即可；
+  浮力要自己在 `_physics_process` 里遍历 `get_overlapping_bodies()`，
+  按浸没比例施加向上的力（约十行）。不必引入流体模拟。
+- `get_overlapping_bodies()` 的结果在物理步内一次性更新，不在移动后立刻生效；
+  需要即时结果时改用信号。

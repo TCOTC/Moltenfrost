@@ -17,3 +17,8 @@
 *.ttf binary
 *.otf binary
 *.glb binary
+# Radiance HDR 与 OpenEXR 的开头是 "#?RADIANCE" / "#?EXR" 这类文本形式的头，
+# 因此 text=auto 很容易把它判成文本，随后 eol=lf 会改写里面的换行字节而损坏文件。
+# 这是本清单里最需要显式声明的一项：它体积最小，损坏后却最难察觉（贴图直接读不出来）。
+*.hdr binary
+*.exr binary

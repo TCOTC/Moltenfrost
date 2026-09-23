@@ -1,57 +1,13 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
-
-[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
-sky_top_color = Color(0.29, 0.36, 0.45, 1)
-sky_horizon_color = Color(0.63, 0.65, 0.68, 1)
-ground_bottom_color = Color(0.16, 0.16, 0.18, 1)
-
-[sub_resource type="Sky" id="Sky_1"]
-sky_material = SubResource("ProceduralSkyMaterial_1")
-
-[sub_resource type="Environment" id="Environment_1"]
-background_mode = 2
-sky = SubResource("Sky_1")
-
-[sub_resource type="BoxMesh" id="BoxMesh_1"]
-size = Vector3(20, 0.5, 20)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_1"]
-size = Vector3(20, 0.5, 20)
-
-[sub_resource type="BoxMesh" id="BoxMesh_step"]
-size = Vector3(4, 1, 4)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_step"]
-size = Vector3(4, 1, 4)
+[ext_resource type="Script" path="res://scripts/level/level_01.gd" id="2_level"]
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
-environment = SubResource("Environment_1")
-
-[node name="Sun" type="DirectionalLight3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0.5, -0.866025, 0, 0.866025, 0.5, 0, 10, 0)
-shadow_enabled = true
-
-[node name="Ground" type="StaticBody3D" parent="."]
-
-[node name="Mesh" type="MeshInstance3D" parent="Ground"]
-mesh = SubResource("BoxMesh_1")
-
-[node name="Collision" type="CollisionShape3D" parent="Ground"]
-shape = SubResource("BoxShape3D_1")
-
-[node name="Step" type="StaticBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0.75, -3)
-
-[node name="Mesh" type="MeshInstance3D" parent="Step"]
-mesh = SubResource("BoxMesh_step")
-
-[node name="Collision" type="CollisionShape3D" parent="Step"]
-shape = SubResource("BoxShape3D_step")
+[node name="Level" type="Node3D" parent="."]
+script = ExtResource("2_level")
 
 [node name="Players" type="Node3D" parent="."]
 

@@ -16,10 +16,9 @@ extends Node3D
 
 const MODE_SETTING := "display/window/size/mode"
 const PLAYER_SCENE := preload("res://scenes/player.tscn")
-## 生成位置沿一个圆均匀分布。槽位由服务端分配，因此不会出现两人重叠在同一个点。
-const SPAWN_SLOTS := 6
-const SPAWN_RADIUS := 4.0
-## --net-stats 的输出间隔。
+## 出生位置由槽位决定，坐标直接引用关卡常量：出生点必须落在通道上，
+## 而通道位置属于关卡几何，两处各写一份迟早会不一致（表现为角色出生在墙里或悬空）。
+## 偶数槽位在左侧通道（熔），奇数槽位在右侧通道（霜），与元素分配同一套规则。
 const STATS_INTERVAL := 2.0
 
 @onready var _players: Node3D = $Players
@@ -51,6 +50,11 @@ func _ready() -> void:
 	Net.join_succeeded.connect(_on_join_succeeded)
 	Net.join_failed.connect(_on_join_failed)
 	Net.server_left.connect(_on_server_left)
+	# 出口的通关信号。Level 是本节点的子节点，而子节点的 _ready 先于父节点执行，
+	# 因此这里取节点一定成功。取不到也不报错：将来若换成别的关卡而没有出口，不影响启动。
+	var exit_portal := get_node_or_null("Level/Exit")
+	if exit_portal != null:
+		exit_portal.cleared.connect(_on_level_cleared)
 
 	_start_session()
 
@@ -87,6 +91,40 @@ func _start_session() -> void:
 	# 本机是否为玩家只取决于运行模式，与它是权威节点这一点无关。
 	if not dedicated:
 		_spawn_player(Net.local_id())
+		if opts.has("capture"):
+			_start_capture(String(opts.get("capture_focus", "world")))
+
+
+## 开发期截图。位置在生成本机角色之后才开始等待，因此不会截到空场景。
+func _start_capture(focus: String) -> void:
+	var player := await _await_local_player()
+	if player == null:
+		push_error("截图失败：找不到本机角色。")
+		get_tree().quit(1)
+		return
+	var rig := CaptureRig.new()
+	rig.name = "CaptureRig"
+	add_child(rig)
+	rig.start(ProjectSettings.globalize_path("res://build/shots"), player, focus)
+
+
+## 取本机角色。生成本机角色的调用就在前面，但节点要到本帧末才进入场景树，
+## 所以这里等一帧再看；等不到就再等一帧，最多等若干帧。
+func _await_local_player() -> Player:
+	for attempt in 8:
+		await get_tree().process_frame
+		var found := _find_local_player()
+		if found != null:
+			return found
+	return null
+
+
+func _find_local_player() -> Player:
+	for node in get_tree().get_nodes_in_group(Player.GROUP_NAME):
+		var candidate := node as Player
+		if candidate != null and candidate.is_local():
+			return candidate
+	return null
 
 
 # ---------------------------------------------------------------- 玩家名单
@@ -123,6 +161,7 @@ func _instantiate_player(data: Variant) -> Node:
 	# 而以 `@` 开头的自动生成名会被拒绝。
 	player.name = _peer_node_name(id)
 	player.peer_id = id
+	player.element = int(info.get("element", Element.Kind.MOLTEN))
 	player.position = _slot_position(int(info.get("slot", 0)))
 	return player
 
@@ -130,8 +169,10 @@ func _instantiate_player(data: Variant) -> Node:
 func _spawn_player(id: int) -> void:
 	if _players.has_node(_peer_node_name(id)):
 		return
-	_spawner.spawn({"id": id, "slot": _allocate_slot(id)})
-	print("[session] 生成玩家 %d" % id)
+	var slot := _allocate_slot(id)
+	var element := _element_for_slot(slot)
+	_spawner.spawn({"id": id, "slot": slot, "element": element})
+	print("[session] 生成玩家 %d（元素 %s，槽位 %d）" % [id, Element.label(element), slot])
 
 
 ## 取当前未被占用的最小槽位。只在服务端调用，然后随生成参数告知各端。
@@ -147,8 +188,18 @@ func _allocate_slot(id: int) -> int:
 
 
 func _slot_position(slot: int) -> Vector3:
-	var angle := TAU * float(slot) / float(SPAWN_SLOTS)
-	return Vector3(sin(angle) * SPAWN_RADIUS, 1.0, cos(angle) * SPAWN_RADIUS)
+	var side := -1.0 if slot % 2 == 0 else 1.0
+	var row := float(slot / 2)
+	return Vector3(side * Level01.CHANNEL_X, 1.0,
+		Level01.SPAWN_Z - row * Level01.SPAWN_ROW_GAP)
+
+
+## 槽位与元素的对应：偶数槽位是「熔」，奇数是「霜」。
+## 两人开局因此必然一人一种元素——这是双人协同的前提。
+## 按槽位而不是按 peer id 取奇偶：客户端 peer id 由引擎随机分配（见 memory/networking.md），
+## 按它取奇偶会让两台机器随机得到同一个元素。
+func _element_for_slot(slot: int) -> int:
+	return Element.Kind.MOLTEN if slot % 2 == 0 else Element.Kind.FROST
 
 
 func _peer_node_name(id: int) -> String:
@@ -235,8 +286,8 @@ func _report_player(player: Player) -> void:
 		# 本机角色报的是"发送方基准"：我实际多久产生一个新位置。
 		# 与远端角色的"最大到达间隔"对照，就能判断空档产生在链路还是在我这边。
 		var change_rate := float(stats["change_count"]) / STATS_INTERVAL
-		print("[net-stats]   本机 peer=%d 位置更新=%.1f 次/秒  最大间隔=%.0f ms  显示移动=%.2f m（发送方基准）" % [
-			player.peer_id, change_rate, stats["change_gap_max_ms"], stats["moved"],
+		print("[net-stats]   本机 peer=%d 位置更新=%.1f 次/秒  最大间隔=%.0f ms  显示移动=%.2f m  复位=%d 次（发送方基准）" % [
+			player.peer_id, change_rate, stats["change_gap_max_ms"], stats["moved"], stats["deaths"],
 		])
 		return
 	# 回拉分两路报：收到的那一路有回拉说明发送方或传输层给了旧值；
@@ -247,7 +298,7 @@ func _report_player(player: Player) -> void:
 	var disp_dips := "0"
 	if int(stats["disp_dips"]) > 0:
 		disp_dips = "%d 次/最大 %.2f m" % [stats["disp_dips"], stats["disp_dip_max"]]
-	print("[net-stats]   远端 peer=%d 每秒到达=%.1f 次  最大到达间隔=%.0f ms  重复=%.0f%%  停顿=%.0f%%  缓冲=%.0f/%.0f ms（基准 %.0f + 补偿 %.0f）  最大连续间隔=%.0f ms  钟速=%.2f×  最大单帧位移=%s  显示移动=%.2f m  收到回拉=%s  显示回拉=%s" % [
+	print("[net-stats]   远端 peer=%d 每秒到达=%.1f 次  最大到达间隔=%.0f ms  重复=%.0f%%  停顿=%.0f%%  缓冲=%.0f/%.0f ms（基准 %.0f + 补偿 %.0f）  最大连续间隔=%.0f ms  钟速=%.2f×  最大单帧位移=%s  显示移动=%.2f m  收到回拉=%s  显示回拉=%s  瞬移=%d 次" % [
 		player.peer_id, per_second, stats["max_gap_ms"],
 		float(stats["duplicated_ratio"]) * 100.0,
 		float(stats["hold_ratio"]) * 100.0,
@@ -255,6 +306,7 @@ func _report_player(player: Player) -> void:
 		float(stats["link_floor"]) * 1000.0, float(stats["stall_penalty"]) * 1000.0,
 		float(stats["worst_gap"]) * 1000.0,
 		stats["rate"], stats["jump_context"], stats["moved"], recv_dips, disp_dips,
+		stats["teleports"],
 	])
 
 
@@ -285,6 +337,10 @@ func _on_server_left() -> void:
 	_set_notice("与主机断开。")
 
 
+func _on_level_cleared(count: int) -> void:
+	_set_notice("本关通关：%d 名玩家同时到达出口" % count)
+
+
 func _set_notice(text: String) -> void:
 	_notice = text
 	_refresh_status()
@@ -301,7 +357,9 @@ func _refresh_status() -> void:
 		_:
 			lines.append("角色：尚未开始会话")
 	lines.append("本机 peer id：%d    其他 peer：%s" % [Net.local_id(), _describe_peers()])
-	lines.append("操作：WASD 移动，空格跳跃")
+	lines.append("操作：WASD 移动，鼠标转向，空格跳跃，Esc 释放鼠标")
+	lines.append("同色池可通行，异色池送回起点；两人各踩自己一侧的按钮，门即开启")
+	lines.append("目标是两人一起站上终点的绿色平台")
 	if not _notice.is_empty():
 		lines.append(_notice)
 	_status.text = "\n".join(lines)
