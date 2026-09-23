@@ -19,6 +19,17 @@
 - 改名后可删除 `.godot/imported/<旧名>-*` 与 `.godot/uid_cache.bin`，交由引擎重建；`uid` 保持不变，引用方不受影响。
 - PCK 虚拟文件系统区分大小写，而 Windows 与近年 macOS 的默认文件系统不区分（官方文档 Project organization），因此资源文件名统一用小写加下划线。
 
+## 全局类缓存缺失时所有 `class_name` 都解析失败（2026-09-24 实测）
+
+- 症状：命令行直接运行工程，蹦出 `Parse Error: Identifier "NetCmdline" not declared in the current scope`、
+  `Could not find type "Player" in the current scope`，最后 `Failed to load script "res://scripts/main.gd"`。
+  看起来像代码写错了，其实是环境问题。
+- 根因：`.godot/global_script_class_cache.cfg` 里 `list=[]`。全局类不是靠扫目录发现的，而是这个文件里注册的；
+  一台从没用编辑器打开过工程的机器（新克隆、只跑过 `--headless`）就是空的。
+- 修法：`<godot> --headless --path <项目> --import`。它会先跑 `update_scripts_classes` 段并逐个列出脚本名
+  （`NetCmdline`、`Player`…），跑完 `list=` 里就有条目了。跑之前先杀掉正在失败的实例。
+- 与上一条同源：`--headless --quit-after N` 同样不会重建这个缓存，所以交付前自检过不代表能跑起来。
+
 ## 特性标签覆盖（源码核实）
 
 - 语法是把标签后缀在设置名后面：`<设置名>.<标签>`。Godot 自己就是这么用的——`rendering/renderer/rendering_method.mobile` 与 `.web` 都是特性覆盖。

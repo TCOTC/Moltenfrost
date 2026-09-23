@@ -1,4 +1,4 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 
@@ -20,6 +20,12 @@ size = Vector3(20, 0.5, 20)
 [sub_resource type="BoxShape3D" id="BoxShape3D_1"]
 size = Vector3(20, 0.5, 20)
 
+[sub_resource type="BoxMesh" id="BoxMesh_step"]
+size = Vector3(4, 1, 4)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_step"]
+size = Vector3(4, 1, 4)
+
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
 
@@ -30,9 +36,6 @@ environment = SubResource("Environment_1")
 transform = Transform3D(1, 0, 0, 0, 0.5, -0.866025, 0, 0.866025, 0.5, 0, 10, 0)
 shadow_enabled = true
 
-[node name="Camera3D" type="Camera3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0.8, -0.6, 0, 0.6, 0.8, 0, 12, 16)
-
 [node name="Ground" type="StaticBody3D" parent="."]
 
 [node name="Mesh" type="MeshInstance3D" parent="Ground"]
@@ -40,3 +43,30 @@ mesh = SubResource("BoxMesh_1")
 
 [node name="Collision" type="CollisionShape3D" parent="Ground"]
 shape = SubResource("BoxShape3D_1")
+
+[node name="Step" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0.75, -3)
+
+[node name="Mesh" type="MeshInstance3D" parent="Step"]
+mesh = SubResource("BoxMesh_step")
+
+[node name="Collision" type="CollisionShape3D" parent="Step"]
+shape = SubResource("BoxShape3D_step")
+
+[node name="Players" type="Node3D" parent="."]
+
+[node name="Spawner" type="MultiplayerSpawner" parent="Players"]
+spawn_path = NodePath("..")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Status" type="Label" parent="HUD"]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 1000.0
+offset_bottom = 160.0
+theme_override_colors/font_color = Color(0.97, 0.98, 1, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 20

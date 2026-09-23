@@ -49,6 +49,7 @@
 
 ```powershell
 & 'D:\Tool\Godot\4.7.2\Godot_v4.7.2-stable_win64_console.exe' --headless --path 'D:\CodeProjects\Moltenfrost' --quit-after 3
+node tools/net-smoke.mjs
 ```
 
-控制台无脚本错误再交给人试玩。手感、音量、数值这类偏好由人判断，不要替人定。
+控制台无脚本错误再交给人试玩。动了联机相关代码则两条都跑，第二条无头起一个服务端与一个客户端，核对连接与角色生成。手感、音量、数值这类偏好由人判断，不要替人定。
