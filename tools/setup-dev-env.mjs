@@ -171,6 +171,13 @@ function detectGodot() {
     } catch { /* 探不到就算了 */ }
   } else {
     candidates.push("godot", "godot4");
+    // macOS 常见安装方式是 Godot.app，应用内的二进制不一定在 PATH 中。
+    for (const appDir of [
+      "/Applications/Godot.app",
+      path.join(os.homedir(), "Applications", "Godot.app"),
+    ]) {
+      candidates.push(path.join(appDir, "Contents", "MacOS", "Godot"));
+    }
   }
 
   for (const cmd of candidates) {
