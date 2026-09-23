@@ -42,6 +42,26 @@ static func parse(args: PackedStringArray) -> Dictionary:
 				else:
 					opts["port"] = int(raw)
 					i += 1
+			"--net-stats":
+				opts["net_stats"] = true
+			"--autopilot":
+				opts["autopilot"] = true
+			"--autopilot-stop":
+				opts["autopilot_stop"] = true
+			"--interp-buffer":
+				var buffer_raw := _value_at(args, i + 1)
+				if not buffer_raw.is_valid_float():
+					push_error("--interp-buffer 需要接一个秒数，例如 --interp-buffer 0.25，收到：%s" % buffer_raw)
+				else:
+					opts["interp_buffer"] = float(buffer_raw)
+					i += 1
+			"--physics-hz":
+				var hz_raw := _value_at(args, i + 1)
+				if not hz_raw.is_valid_int() or int(hz_raw) < 1:
+					push_error("--physics-hz 需要接一个正整数帧率，例如 --physics-hz 120，收到：%s" % hz_raw)
+				else:
+					opts["physics_hz"] = int(hz_raw)
+					i += 1
 		i += 1
 	return opts
 

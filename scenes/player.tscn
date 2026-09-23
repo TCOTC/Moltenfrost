@@ -6,6 +6,9 @@
 properties/0/path = NodePath(".:position")
 properties/0/spawn = true
 properties/0/replication_mode = 1
+properties/1/path = NodePath(".:sync_time")
+properties/1/spawn = false
+properties/1/replication_mode = 1
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
@@ -18,7 +21,9 @@ height = 1.8
 [node name="Player" type="CharacterBody3D"]
 script = ExtResource("1_player")
 
-[node name="Mesh" type="MeshInstance3D" parent="."]
+[node name="Visual" type="Node3D" parent="."]
+
+[node name="Mesh" type="MeshInstance3D" parent="Visual"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 mesh = SubResource("CapsuleMesh_1")
 
