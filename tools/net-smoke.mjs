@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 // 熔霜 · 联机冒烟测试
 //
-// 无头起两个实例：一个专用服务端，一个客户端接入 127.0.0.1，
-// 然后核对日志里是否出现该出现的事件。它覆盖的是"连接是否建立、角色是否被生成并同步到对端"，
-// 不覆盖手感与延迟——那两件事只能靠人为试玩与网络损伤注入（见 memory/networking.md）。
+// 两段检查：
+//   1. 插值逻辑测试（tests/remote_interpolator_test.gd）：不联网，验证收到位置快照后的取样是否均匀。
+//   2. 双实例检查：无头起一个专用服务端与一个客户端，各断言一次连接与角色生成。
+//
+// 它覆盖的是"连接是否建立、角色是否被生成并同步到对端、远端显示是否平滑"，
+// 不覆盖手感与延迟——那两件事只能由人在真机上判断，并配合网络损伤注入
+//（见 memory/networking.md）。
 //
 // 用法：
 //   node tools/net-smoke.mjs
@@ -15,7 +19,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -159,11 +163,41 @@ function waitFor(state, needle, timeoutMs) {
 }
 
 function stop(state) {
-  if (!state.exited) state.child.kill();
+  if (state.exited) return;
+  // 要结束整棵进程树：Windows 上的 *_console.exe 只是个包装程序，
+  // 它会以子进程方式启动真正的引擎二进制。只结束包装进程会留下实例占着端口，
+  // 下次运行就会以"端口被占用"的形式失败。
+  if (process.platform === "win32") {
+    try {
+      execFileSync("taskkill", ["/PID", String(state.child.pid), "/T", "/F"], { stdio: "ignore" });
+      return;
+    } catch {
+      // 已经退出了就什么都不用做。
+    }
+  }
+  state.child.kill("SIGKILL");
 }
 
 function tail(text, lines = 30) {
   return text.split(/\r?\n/).slice(-lines).join("\n");
+}
+
+// 插值逻辑测试。它不联网，但同样属于联机正确性：远端角色是否平滑取决于
+// 收到快照后的取样方式，而这一层可以用确定性的输入算出来。
+function runInterpolationTest(godot, opts) {
+  const proc = spawnSync(
+    godot,
+    ["--headless", "--path", PROJECT_DIR, "--script", "tests/remote_interpolator_test.gd"],
+    { cwd: PROJECT_DIR, encoding: "utf8" },
+  );
+  const output = `${proc.stdout || ""}${proc.stderr || ""}`;
+  if (opts.verbose) process.stdout.write(output);
+  const fatal = FATAL_PATTERNS.find((p) => output.includes(p));
+  if (fatal) throw new Error(`插值测试的输出里出现「${fatal}」\n${tail(output)}`);
+  if (proc.status !== 0) throw new Error(`插值测试退出码 ${proc.status}\n${tail(output)}`);
+  const m = /插值逻辑测试通过（(\d+) 项断言）/.exec(output);
+  if (!m) throw new Error(`插值测试没有报告通过\n${tail(output)}`);
+  return Number(m[1]);
 }
 
 async function main() {
@@ -181,6 +215,9 @@ async function main() {
   const base = ["--headless", "--path", PROJECT_DIR, "--"];
   const timeoutMs = opts.timeout * 1000;
   const assertions = [];
+
+  const interpolationChecks = runInterpolationTest(godot, opts);
+  assertions.push(`插值取样保持均匀（${interpolationChecks} 项断言）`);
 
   const server = launch(godot, [...base, "--host", "--port", String(opts.port)], "服务端", opts);
   let client = null;
@@ -209,6 +246,12 @@ async function main() {
     // 于是被判为本机角色。这一条同时说明 MultiplayerSynchronizer 已按预期注册。
     await waitFor(client, `本机角色 peer=${peerId} 已就位`, timeoutMs);
     assertions.push("客户端收到自己的角色（生成同步生效）");
+
+    // 观察客户端角色的那一侧是服务端，所以平滑启用的证据要从服务端的日志里核对。
+    // 这一条的价值在于区分"平滑没起作用"与"跑的是不带平滑的旧代码"——
+    // 后者在日志里根本不会出现这一行。
+    await waitFor(server, "时钟调速平滑", timeoutMs);
+    assertions.push("服务端侧的远端角色启用了显示平滑");
 
     // 无头启动必须是专用服务端语义：不给自己生成角色。
     if (server.text.includes("本机角色")) {

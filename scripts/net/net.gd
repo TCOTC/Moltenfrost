@@ -28,6 +28,20 @@ signal server_left()
 var role: Role = Role.OFFLINE
 var port: int = DEFAULT_PORT
 
+## 往返时延（毫秒），由每秒一次的 ping/pong 实测。-1 表示还没测到。
+## 它单独测量而不是从同步包推算，因为同步包单向到达时间需要知道两端时钟偏差；
+## 而 ping 把发送方自己的时刻带过去再带回来，因此用发送方自己的时钟就能算出往返时延。
+var rtt_ms: float = -1.0
+
+const PING_INTERVAL := 1.0
+## 时延测量保留的最大在途样本数。防止丢包时表越来越大。
+const PING_MAX_IN_FLIGHT := 16
+
+var _ping_elapsed: float = 0.0
+var _ping_seq: int = 0
+## 序号 → 发出时的本地毫秒时刻。
+var _ping_sent: Dictionary = {}
+
 var _peer: MultiplayerPeer = null
 var _dedicated: bool = false
 
@@ -37,6 +51,51 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
+
+
+func _process(delta: float) -> void:
+	if role == Role.OFFLINE:
+		return
+	_ping_elapsed += delta
+	if _ping_elapsed < PING_INTERVAL:
+		return
+	_ping_elapsed = 0.0
+	_ping_peers()
+
+
+## 向所有已知 peer 发一次时延探测。用不可靠传输：
+## 重传会把等待时间算进往返时延，测出来的就不是链路时延了。
+func _ping_peers() -> void:
+	if not multiplayer.has_multiplayer_peer():
+		return
+	_ping_seq += 1
+	var seq := _ping_seq
+	_ping_sent[seq] = Time.get_ticks_msec()
+	while _ping_sent.size() > PING_MAX_IN_FLIGHT:
+		# 丢包时对应的回复不会来，丢掉最旧的样本（字典保持插入顺序）。
+		_ping_sent.erase(_ping_sent.keys()[0])
+	var sent := int(_ping_sent[seq])
+	if role == Role.CLIENT:
+		ping.rpc_id(1, seq, sent)
+	else:
+		for id in multiplayer.get_peers():
+			ping.rpc_id(id, seq, sent)
+
+
+@rpc("any_peer", "call_remote", "unreliable")
+func ping(seq: int, sent_msec: int) -> void:
+	# 原样把发起方的时刻带回去，由发起方用自己的钟算往返时延。
+	pong.rpc_id(multiplayer.get_remote_sender_id(), seq, sent_msec)
+
+
+@rpc("any_peer", "call_remote", "unreliable")
+func pong(seq: int, sent_msec: int) -> void:
+	if not _ping_sent.has(seq):
+		return
+	_ping_sent.erase(seq)
+	var sample := float(Time.get_ticks_msec() - sent_msec)
+	# 指数平滑：单个样本会被一次调度尖峰拉高很多。
+	rtt_ms = sample if rtt_ms < 0.0 else lerpf(rtt_ms, sample, 0.3)
 
 
 ## 本机是否为权威节点。
@@ -100,6 +159,8 @@ func close() -> void:
 	multiplayer.multiplayer_peer = null
 	role = Role.OFFLINE
 	_dedicated = false
+	rtt_ms = -1.0
+	_ping_sent.clear()
 
 
 func _on_connected_to_server() -> void:
