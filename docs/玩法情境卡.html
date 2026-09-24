@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>熔霜 · 情境卡（重写版）</title>
+<style>
+*{box-sizing:border-box}
+:root{
+  --font:"Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans SC",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --bg:#0d1117;--panel:#161e2b;--panel2:#1d2735;--line:#293345;--line2:#3a4760;
+  --txt:#e8eef7;--txt2:#9db0c8;
+  --fire:#ff7a45;--ice:#38bdf8;--ok:#34d399;--warn:#fbbf24;--bad:#f87171;
+  --sk-1:#e8eef7;--sk-2:#9db0c8;--sk-line:#3a4760;--sk-panel:#1b2432;--sk-ground:#26334a;--sk-ground2:#1d2734;--sk-bg:#0d1117;
+  --shadow:0 12px 34px rgba(0,0,0,.42);
+}
+html[data-theme="light"]{
+  --bg:#f5f7fb;--panel:#ffffff;--panel2:#f1f5fa;--line:#e3e9f2;--line2:#c9d5e6;
+  --txt:#0f172a;--txt2:#5a6b83;
+  --fire:#e2570d;--ice:#0284c7;--ok:#059669;--warn:#b45309;--bad:#dc2626;
+  --sk-1:#16233a;--sk-2:#5a6b83;--sk-line:#c9d5e6;--sk-panel:#f1f6fc;--sk-ground:#dfe8f4;--sk-ground2:#cfdbeb;--sk-bg:#ffffff;
+  --shadow:0 10px 26px rgba(15,23,42,.08);
+}
+html,body{margin:0}
+body{
+  background:
+    radial-gradient(1100px 560px at 86% -12%,rgba(255,122,69,.13),transparent 62%),
+    radial-gradient(900px 480px at 4% -6%,rgba(56,189,248,.13),transparent 62%),
+    var(--bg);
+  color:var(--txt);font-family:var(--font);font-size:14px;line-height:1.72;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1260px;margin:0 auto;padding:0 20px}
+a{color:inherit}
+.topbar{position:sticky;top:0;z-index:30;backdrop-filter:blur(10px);background:var(--bg);border-bottom:1px solid var(--line)}
+.tb{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:60px;flex-wrap:wrap;padding:9px 0}
+.brand{display:flex;align-items:center;gap:11px}
+.logo{width:32px;height:32px;flex:0 0 32px;border-radius:10px;display:grid;place-items:center;font-size:17px;
+  background:linear-gradient(135deg,rgba(255,122,69,.9),rgba(56,189,248,.9));color:#0b1017}
+.brand strong{display:block;font-size:14.5px;line-height:1.3}
+.bsub{display:block;font-size:11.5px;color:var(--txt2);line-height:1.3}
+.tnav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tnav a,.tnav button{font-family:var(--font)}
+.tnav a{font-size:12.5px;color:var(--txt2);text-decoration:none;padding:5px 10px;border-radius:9px;border:1px solid var(--line2);background:var(--panel2)}
+.tnav a:hover{color:var(--txt)}
+button.ghost{font-size:12.5px;color:var(--txt2);background:var(--panel2);border:1px solid var(--line2);padding:5px 11px;border-radius:10px;cursor:pointer}
+button.ghost:hover{color:var(--txt)}
+section{margin:30px 0}
+h2.sec{font-size:19px;margin:0 0 3px}
+p.sub{color:var(--txt2);margin:0 0 14px;font-size:12.8px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
+/* hero */
+.hero{display:grid;grid-template-columns:1.45fr 1fr;gap:16px;margin-top:24px}
+@media(max-width:960px){.hero{grid-template-columns:1fr}}
+.hero-main{padding:22px 24px}
+.hero-main h1{font-size:24px;margin:0 0 10px;line-height:1.35}
+.lead{color:var(--txt2);font-size:13.2px;margin:0 0 13px}
+.lead b{color:var(--txt)}
+.rules{display:grid;gap:8px;margin:0}
+.rule{display:grid;grid-template-columns:26px 1fr;gap:10px;align-items:start;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:9px 12px}
+.rule .n{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:12px;font-weight:800;
+  background:linear-gradient(135deg,var(--fire),var(--ice));color:#0b1017}
+.rule b{font-size:13px}
+.rule span{font-size:12.4px;color:var(--txt2);display:block}
+.caveat{margin-top:12px;font-size:12.3px;color:var(--txt2);background:var(--panel2);border-left:3px solid var(--warn);border-radius:0 10px 10px 0;padding:8px 12px}
+.hero-side{padding:20px}
+.cats{display:grid;gap:8px}
+.catrow{display:grid;grid-template-columns:66px 1fr 26px;gap:9px;align-items:center;font-size:12.2px;color:var(--txt2)}
+.catrow i{display:block;height:9px;border-radius:5px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:14px}
+.stat{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:9px 11px}
+.stat .n{font-size:21px;font-weight:800;line-height:1.25}
+.stat .l{font-size:11.4px;color:var(--txt2)}
+/* chips */
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;border-radius:999px;padding:2px 9px;border:1px solid var(--line2);background:var(--panel2);color:var(--txt2)}
+.pill.cost.low{color:#34d399;border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.12)}
+.pill.cost.mid{color:#fbbf24;border-color:rgba(251,191,36,.45);background:rgba(251,191,36,.12)}
+.pill.cost.high{color:#f87171;border-color:rgba(248,113,113,.45);background:rgba(248,113,113,.12)}
+html[data-theme="light"] .pill.cost.low{color:#047857}
+html[data-theme="light"] .pill.cost.mid{color:#a16207}
+html[data-theme="light"] .pill.cost.high{color:#b91c1c}
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line2);background:var(--panel2);color:var(--txt2);
+  border-radius:999px;padding:3px 11px;font-size:12px;cursor:pointer;user-select:none}
+.chip:hover{color:var(--txt)}
+.chip.on{color:var(--txt);background:linear-gradient(135deg,rgba(255,122,69,.24),rgba(56,189,248,.24))}
+.chip i.dot{width:8px;height:8px;border-radius:3px;display:block}
+.chip .cnt{font-size:10.5px;opacity:.72}
+/* filters */
+.filters{padding:14px 16px;margin-bottom:16px;display:grid;gap:10px}
+.frow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.flabel{font-size:11.5px;color:var(--txt2);width:46px;flex:0 0 46px;letter-spacing:.05em}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+input#q{font-family:var(--font);font-size:12.5px;color:var(--txt);background:var(--panel2);border:1px solid var(--line2);
+  border-radius:10px;padding:6px 11px;min-width:240px;outline:none}
+input#q:focus{border-color:var(--ice)}
+.resline{font-size:12px;color:var(--txt2)}
+/* situation cards */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(392px,1fr));gap:16px}
+@media(max-width:560px){.cards{grid-template-columns:1fr}}
+.sc{padding:16px 16px 14px;display:flex;flex-direction:column;gap:11px;position:relative;overflow:hidden;--acc:#38bdf8}
+.sc::before{content:"";position:absolute;left:0;top:0;width:100%;height:3px;background:linear-gradient(90deg,var(--acc),transparent 78%)}
+.sctop{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.sid{font-weight:800;font-size:12px;color:var(--acc);border:1px solid var(--line2);border-radius:8px;padding:1px 8px}
+.sc h3{font-size:17px;margin:0;line-height:1.3}
+.verb{margin-left:auto;font-size:12.5px;font-weight:800;color:#0b1017;background:linear-gradient(135deg,var(--fire),var(--ice));border-radius:999px;padding:2px 12px}
+.hook{margin:0;font-size:14px;font-weight:600;line-height:1.62}
+.sbwrap{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:4px}
+svg.sb{width:100%;height:auto;display:block}
+svg.sb text{font-family:var(--font)}
+.sk-t3{font-size:8.5px;font-weight:600;fill:var(--sk-2)}
+.sk-t5{font-size:15px;font-weight:800;fill:var(--sk-1)}
+.sk-t6{font-size:9.5px;font-weight:700;fill:var(--sk-1)}
+.f-fire{fill:#ff7a45}.f-ice{fill:#38bdf8}.f-ok{fill:#34d399}.f-warn{fill:#fbbf24}.f-bad{fill:#f87171}
+.f-ink{fill:var(--sk-1)}.f-soft{fill:var(--sk-2)}.f-panel{fill:var(--sk-panel)}.f-bg{fill:var(--sk-bg)}
+.f-ground{fill:var(--sk-ground)}.f-ground2{fill:var(--sk-ground2)}
+.s-fire{stroke:#ff7a45}.s-ice{stroke:#38bdf8}.s-ok{stroke:#34d399}.s-warn{stroke:#fbbf24}.s-bad{stroke:#f87171}
+.s-ink{stroke:var(--sk-1)}.s-soft{stroke:var(--sk-2)}.s-line{stroke:var(--sk-line)}
+.f-none{fill:none}
+.f-hatch{fill:url(#pHatch)}
+.arw{stroke-width:2.2;stroke-linecap:round;fill:none}
+.meta{display:flex;gap:6px;flex-wrap:wrap}
+.blk h4{margin:0 0 2px;font-size:11.5px;color:var(--txt2);letter-spacing:.07em;font-weight:700}
+.blk p{margin:0;font-size:12.9px}
+.blk.me{border-left:3px solid var(--bad);padding-left:11px}
+.blk.go{border-left:3px solid var(--ok);padding-left:11px}
+.blk.risk{border-left:3px solid var(--warn);padding-left:11px}
+.crit{margin-top:auto;padding-top:7px;border-top:1px dashed var(--line);display:flex;gap:6px;flex-wrap:wrap}
+.crit span{font-size:11px;color:var(--ok);border:1px solid rgba(52,211,153,.35);background:rgba(52,211,153,.1);border-radius:999px;padding:1px 8px}
+html[data-theme="light"] .crit span{color:#047857}
+.sc.hide{display:none}
+/* loops */
+.loops{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.loop{padding:16px;display:flex;flex-direction:column;gap:9px}
+.loop .lh{display:flex;align-items:center;gap:9px}
+.loop .lv{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;font-weight:800;font-size:13px;
+  background:linear-gradient(135deg,var(--fire),var(--ice));color:#0b1017}
+.loop h3{font-size:15px;margin:0}
+.loop p{margin:0;font-size:12.9px;color:var(--txt2)}
+.loop p b{color:var(--txt)}
+.loop .foot{margin-top:auto;font-size:11.8px;color:var(--txt2);border-top:1px dashed var(--line);padding-top:7px}
+/* table */
+.tablewrap{overflow-x:auto;padding:4px}
+table.tv{border-collapse:collapse;width:100%;font-size:12.5px;min-width:760px}
+table.tv th,table.tv td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.tv thead th{font-size:11.5px;color:var(--txt2);background:var(--panel2)}
+table.tv tr:last-child td{border-bottom:0}
+table.tv tr:hover td{background:var(--panel2)}
+table.tv td.idc{font-weight:800;width:52px}
+table.tv td.act{width:104px}
+.badge{display:inline-block;font-size:11.5px;font-weight:700;border-radius:999px;padding:1px 9px;white-space:nowrap}
+.badge.up{color:#34d399;background:rgba(52,211,153,.13);border:1px solid rgba(52,211,153,.4)}
+.badge.rw{color:#38bdf8;background:rgba(56,189,248,.13);border:1px solid rgba(56,189,248,.4)}
+.badge.dn{color:#fbbf24;background:rgba(251,191,36,.13);border:1px solid rgba(251,191,36,.4)}
+.badge.cut{color:#f87171;background:rgba(248,113,113,.13);border:1px solid rgba(248,113,113,.4)}
+html[data-theme="light"] .badge.up{color:#047857}
+html[data-theme="light"] .badge.rw{color:#0369a1}
+html[data-theme="light"] .badge.dn{color:#a16207}
+html[data-theme="light"] .badge.cut{color:#b91c1c}
+/* plan */
+.plan{display:grid;gap:12px}
+.step{padding:15px 18px;display:grid;grid-template-columns:92px 1fr;gap:16px;align-items:start}
+.step .when{font-size:12px;font-weight:800;color:var(--fire);letter-spacing:.04em}
+.step h4{margin:0 0 4px;font-size:14.5px}
+.step p{margin:0;font-size:12.9px;color:var(--txt2)}
+.step p b{color:var(--txt)}
+@media(max-width:560px){.step{grid-template-columns:1fr}}
+.footbar{color:var(--txt2);font-size:12px;text-align:center;margin:44px 0 26px}
+</style>
+</head>
+<body>
+<svg id="globaldefs" width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true"><defs>
+<marker id="mFire" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#ff7a45"/></marker>
+<marker id="mIce" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#38bdf8"/></marker>
+<marker id="mInk" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" class="f-soft"/></marker>
+<marker id="mOk" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#34d399"/></marker>
+<marker id="mWarn" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#fbbf24"/></marker>
+<marker id="mBad" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#f87171"/></marker>
+<pattern id="pHatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" class="s-soft" stroke-width="2"/></pattern>
+</defs></svg>
+<header class="topbar">
+  <div class="wrap tb">
+    <div class="brand"><span class="logo">❄</span>
+      <div><strong>熔霜 · 情境卡</strong><span class="bsub">14 个动作先行的情况 · 旧库的处置表 · 重玩循环</span></div>
+    </div>
+    <nav class="tnav">
+      <a href="#cards">情境卡</a>
+      <a href="#loops">重玩循环</a>
+      <a href="#dispose">旧库处置</a>
+      <a href="#week">一周计划</a>
+      <a href="玩法方案库-可视化导读.html">← 旧库可视化</a>
+      <button id="themeBtn" class="ghost">☀️ 浅色</button>
+    </nav>
+  </div>
+</header>
+<main class="wrap">
+  <section class="hero">
+    <div class="card hero-main">
+      <h1>先把「动词」找出来，再谈系统</h1>
+      <p class="lead">上一版 30 条方案是<b>风险清单</b>：全是系统名词，没有一个动作。这一版反过来——每条只写一件事：<b>玩家在 30 秒里做什么、为什么会叫出来、去掉另一个人为什么就不成立</b>。</p>
+      <div class="rules">
+        <div class="rule"><span class="n">1</span><div><b>能用一个动词说清</b><span>冻 / 烧 / 拽 / 抛 / 抬 / 爆。说不清动词的，就不是玩法。</span></div></div>
+        <div class="rule"><span class="n">2</span><div><b>30 秒内会出现一次反应</b><span>叫出来、笑出来、或者沉默两秒。没有反应的机制不要做。</span></div></div>
+        <div class="rule"><span class="n">3</span><div><b>去掉第二个人就完全不成立</b><span>不是变慢，而是这件事根本不存在。只是"效率减半"的都是单人任务。</span></div></div>
+      </div>
+      <p class="caveat">注意：下面 14 条全是<b>假设</b>，一条都没被验证过。它们的价值不在于哪个好，而在于每个都能在一天内做成可玩的 15 秒片段去证伪。旧库不是错的，它只是不能用来选创意——它会按"低成本高复用"把棱角全裁掉。</p>
+    </div>
+    <div class="card hero-side">
+      <h3 style="font-size:13px;margin:0 0 10px;color:var(--txt2);letter-spacing:.05em">按类分布</h3>
+      <div class="cats" id="cats"></div>
+      <div class="stats" id="stats"></div>
+      <p style="font-size:12px;color:var(--txt2);margin:14px 0 0">淘汰标准写在页面底部：没动词的、去掉一个人仍成立的、情绪只停留在"协商/分配/维持"的，全部不进这一版。</p>
+    </div>
+  </section>
+
+  <section id="cards">
+    <h2 class="sec">情境卡</h2>
+    <p class="sub">每张卡三格分镜是"该发生什么"，不是画面设计——先让程序跑出这个动作，再谈美术。</p>
+    <div class="filters card" id="filters"></div>
+    <div class="cards" id="cardArea"></div>
+  </section>
+
+  <section id="loops">
+    <h2 class="sec">三种重玩循环</h2>
+    <p class="sub">情境卡解决"好玩"，这一节解决"反复玩"。三者可以叠加，但请按顺序验证——后两个的前提是第一个已经成立。</p>
+    <div class="loops" id="loopArea"></div>
+  </section>
+
+  <section id="dispose">
+    <h2 class="sec">旧库处置表</h2>
+    <p class="sub">30 条旧方案逐条给出处置：升级为情境卡 / 改造后并入 / 降级为主线内容 / 砍掉。降级不代表没价值——一次性内容和主线叙事本来就该是主线。</p>
+    <div class="card tablewrap"><table class="tv"><thead>
+      <tr><th>编号</th><th>旧名称</th><th>处置</th><th>去向 / 理由</th></tr>
+    </thead><tbody id="dispBody"></tbody></table></div>
+  </section>
+
+  <section id="week">
+    <h2 class="sec">一周验证计划</h2>
+    <p class="sub">目标不是做出游戏，而是把"有趣"这件事从想象变成可观测的行为。</p>
+    <div class="plan" id="planArea"></div>
+    <div class="card" style="padding:15px 18px;margin-top:12px;font-size:12.9px;color:var(--txt2)">
+      <b style="color:var(--txt)">通过标准只有一个：</b>五个试玩的人里，至少三个人在没人要求的情况下主动说"再来一次"。做不到就说明动作本身不够好，别急着往上叠系统。
+    </div>
+  </section>
+  <p class="footbar">情境卡为原创设计；旧库处置基于 docs/玩法方案库.md（30 条逐条对应）· 配套可视化：玩法方案库-可视化导读.html</p>
+</main>
+<script>
+/* ============================================================
+   分镜绘制工具：每个分镜是一个 104x88 的面板（局部坐标）
+   ============================================================ */
+const PL=(i,inner)=>`<g transform="translate(${4+i*112},6)"><rect x="0" y="0" width="104" height="88" rx="8" class="f-panel s-line" stroke-width="1"/>${inner}</g>`;
+const SB=(a,b,c)=>`<svg class="sb" viewBox="0 0 336 112" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${PL(0,a)}${PL(1,b)}${PL(2,c)}${[0,1,2].map(i=>`<text x="${56+i*112}" y="107" class="sk-t3" text-anchor="middle">${'①②③'[i]}</text>`).join('')}</svg>`;
+const G=(x1,x2,y=74)=>`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" class="s-line" stroke-width="1.8"/>`;
+const LN=(x1,y1,x2,y2,cls='s-ink',ex='')=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="${cls}" ${ex}/>`;
+const P=(x,y,t)=>`<circle cx="${x}" cy="${y}" r="5.5" class="f-${t}"/>`;
+const PO=(x,y,t)=>`<circle cx="${x}" cy="${y}" r="5.5" class="f-none s-${t}" stroke-width="1.7"/>`;
+const B=(x,y,w,h,t,op=.5)=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2.5" class="f-${t}" opacity="${op}"/>`;
+const O=(x,y,w,h,t)=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2.5" class="f-none s-${t}" stroke-width="1.4"/>`;
+const OC=(x,y,r,t)=>`<circle cx="${x}" cy="${y}" r="${r}" class="f-none s-${t}" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+const H=(x,y,w,h)=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" class="f-hatch" opacity=".85"/>`;
+const S=(x,y)=>`<circle cx="${x}" cy="${y}" r="3" class="f-soft" opacity=".55"/><circle cx="${x+5}" cy="${y-5}" r="2.4" class="f-soft" opacity=".45"/><circle cx="${x-4}" cy="${y-7}" r="2" class="f-soft" opacity=".4"/>`;
+const T=(x,y,s,c='middle',a)=>{const an=(c==='start'||c==='end'||c==='middle')?c:(a||'middle');return `<text x="${x}" y="${y}" class="sk-t3" text-anchor="${an}">${s}</text>`;};
+const T5=(x,y,s)=>`<text x="${x}" y="${y}" class="sk-t5" text-anchor="middle">${s}</text>`;
+const A=(x1,y1,x2,y2,mk='mInk',cls='s-ink',ex='')=>`<path d="M${x1} ${y1}L${x2} ${y2}" class="arw ${cls}" ${ex} marker-end="url(#${mk})"/>`;
+const CRK=(x,y)=>`<path d="M${x} ${y} l3 -4 l-2 -4 l4 -4" class="s-bad" fill="none" stroke-width="1.6"/>`;
+const BURST=(x,y)=>`<path d="M${x-6} ${y} H${x+6} M${x} ${y-6} V${y+6} M${x-4} ${y-4} L${x+4} ${y+4} M${x+4} ${y-4} L${x-4} ${y+4}" class="s-warn" fill="none" stroke-width="1.5"/>`;
+const DIA=(x,y,s=5,t='warn')=>`<path d="M${x} ${y-s} l${s} ${s} l${-s} ${s} l${-s} ${-s} z" class="f-${t}"/>`;
+const X=(x,y)=>`<path d="M${x-4} ${y-4} l8 8 M${x+4} ${y-4} l-8 8" class="s-bad" fill="none" stroke-width="2"/>`;
+const SLIP=(x,y)=>`<path d="M${x-6} ${y} q3 -3 6 0 M${x-4} ${y+4} q3 -3 6 0" class="s-soft" fill="none" stroke-width="1.2"/>`;
+
+/* ============================================================
+   14 张情境卡
+   cat 动作/喜剧/取舍/信息/自产 · verb 那个动词 · cost 相对当前工程的增量
+   ============================================================ */
+const CATS={
+  act:{n:'动作',c:'#ff7a45',i:'把元素当动词用：冻、爆、抛、烧断。重玩来自熟练度与爽感。'},
+  fun:{n:'喜剧',c:'#38bdf8',i:'物理与绳索制造意外，笑本身就是留存。重玩来自涌现。'},
+  trade:{n:'取舍',c:'#a78bfa',i:'每个选择都要牺牲另一个人。重玩来自道德决策每次不同。'},
+  info:{n:'信息',c:'#34d399',i:'看不见对方，只能靠事先约定。玩家自创暗号＝自产内容。'},
+  self:{n:'自产',c:'#fbbf24',i:'玩家出题给玩家，内容永不枯竭。成本最高，但唯一真正无限。'}
+};
+const DATA=[
+/* ---------------- 动作 ---------------- */
+{id:'S01',title:'蒸汽炮',cat:'act',verb:'爆',emo:'爽',dur:'15 秒',cost:'低',src:['B3','C2'],
+ hook:'霜把水冻成实心块，熔对它猛烧——两个人一起造一发把自己人打出去的炮弹。',
+ sb:[
+  `${G(4,100)}${B(16,64,72,10,'ice',.28)}${P(26,68,'ice')}${P(78,68,'fire')}${T(52,56,'一池水','sk-t3')}`,
+  `${G(4,100)}${B(16,54,72,20,'ice',.55)}${P(26,48,'ice')}${P(80,68,'fire')}${A(78,58,52,58,'mFire','s-fire')}${S(50,40)}${T(52,34,'冻实了','sk-t3')}`,
+  `${G(4,100)}${B(16,64,72,10,'ice',.3)}${CRK(28,56)}${S(44,54)}${P(52,22,'ice')}${BURST(52,40)}${A(52,46,52,32,'mFire','s-fire')}${T(52,12,'被弹飞','sk-t3')}`],
+ must2:'炮弹的两半由两个人分别控制：一个人决定"装填"（冻到什么程度），一个人决定"点火"（什么时候烧）。谁都不知道对方的时机，只能现场对齐；单人做不出这个动作。',
+ replay:'15 秒一发，失败成本几乎为零。想刷的是距离与角度的纪录，以及两个人各自的瞄准习惯——这类追求"再来一次"的动机来自熟练度，不需要新关卡。',
+ risk:'要一个"可被引爆的实体"：蒸汽冲量、碎块抛射。冲量必须在服务端可复现，否则两个人的世界会不一样；先做方形冲量，别做软体。'},
+{id:'S02',title:'一个人跑，一个人铺',cat:'act',verb:'冻 / 追着烧',emo:'紧张',dur:'20 秒',cost:'低',src:['A1','C2'],
+ hook:'一个人在前面冻出路，另一个人在后面追着把路烧掉。',
+ sb:[
+  `${G(4,34)}${G(74,100)}${P(16,68,'fire')}${P(30,68,'ice')}${T(54,82,'缺口','sk-t3')}`,
+  `${G(4,34)}${G(74,100)}${B(34,66,40,8,'ice',.55)}${P(24,68,'fire')}${P(54,62,'ice')}${T(52,20,'边跑边冻','sk-t3')}`,
+  `${G(4,34)}${G(74,100)}${B(34,66,18,8,'ice',.5)}${S(58,60)}${P(24,68,'fire')}${P(82,68,'ice')}${T(52,20,'身后化掉','sk-t3')}`],
+ must2:'一个负责"造路"，一个负责"毁路"，而毁路的人会毁掉造路人的成果——所以必须精确错开半秒。去掉任何一个人，这个动作要么不存在，要么立刻失败。',
+ replay:'秒表与路线优化：每一遍都想把那个"半秒"缩得更短。这是把 A1（地表状态层）从一个谜题层改成跑动动作之后的直接收益。',
+ risk:'需要地表状态 + 残留存活时间（旧 A1 的机制）。注意客户端插值造成的"踩空感"——桥必须在视觉出现前就已经在服务端存在。'},
+{id:'S03',title:'烧掉身后的桥',cat:'act',verb:'烧断',emo:'狠',dur:'25 秒',cost:'低',src:['A1','C3'],
+ hook:'逃命的时候，唯一能拖延追兵的材料，就是你们自己刚刚走过的那座桥。',
+ sb:[
+  `${G(4,100,58)}${B(4,78,96,10,'fire',.3)}${H(4,34,14,44)}${P(54,52,'fire')}${P(64,52,'ice')}${T(30,26,'追兵','sk-t3')}`,
+  `${G(4,100,58)}${B(4,78,96,10,'fire',.3)}${H(4,40,14,38)}${P(52,52,'fire')}${P(66,52,'ice')}${A(48,58,34,62,'mFire','s-fire')}${T(34,72,'烧断','sk-t3')}`,
+  `${G(46,100,58)}${B(4,78,96,10,'fire',.3)}${H(4,48,14,30)}${S(34,58)}${P(60,52,'fire')}${P(74,52,'ice')}${T(52,20,'追兵掉下去','sk-t3')}`],
+ must2:'桥是两个人共同的退路：只顾往前跑就没人断后，只顾断后谁都过不去。断桥的时机必须由跑在前面的人喊，而执行的是后面那个。',
+ replay:'这是取舍而不是记忆：什么时候断、断几节、由谁断，每一局都不一样。追兵的速度就是压力源（旧 C2），但它服务的是一个动作，不再是一条数值曲线。',
+ risk:'需要"能破坏自己走过的地形"的地表层，并且改动要立刻同步。破坏判定放服务端；表现层可以延迟，但断裂点必须一致。'},
+{id:'S04',title:'活体台阶',cat:'fun',verb:'凝固承重',emo:'笑',dur:'20 秒',cost:'低',src:['B3','D1'],
+ hook:'一个人把自己化成台阶，让另一个人踩上去。',
+ sb:[
+  `${G(4,100)}${B(72,22,28,52,'ground2',.85)}${O(72,22,28,52,'line')}${P(24,68,'ice')}${P(42,68,'fire')}${T(52,82,'上不去','sk-t3')}`,
+  `${G(4,100)}${B(72,22,28,52,'ground2',.85)}${O(72,22,28,52,'line')}${B(46,52,18,22,'fire',.6)}${PO(55,66,'fire')}${P(24,68,'ice')}${T(52,44,'熔渣台阶','sk-t3')}`,
+  `${G(4,100)}${B(72,22,28,52,'ground2',.85)}${O(72,22,28,52,'line')}${B(46,60,18,14,'fire',.45)}${S(55,54)}${P(86,16,'ice')}${DIA(86,6)}${T(52,82,'踩人上墙','sk-t3')}`],
+ must2:'施放者会失去行动能力、变成一块地形，只能由另一个人使用它。单人无法完成这笔交易——这正是"把自己当资源"最直接的形式。',
+ replay:'熟练度 + 手滑：台阶塌掉的时机、踩上去的那一下。而且"人踩人"的画面本身就是笑点，观众反应会让人想再来一次。',
+ risk:'角色变地形意味着碰撞体切换、被踩的人操作权受限、以及"变回来"的状态机。别一开始就做无缝变形，先做两个离散状态。'},
+{id:'S05',title:'把人扔出去',cat:'act',verb:'抛 / 冻落点',emo:'爽',dur:'15 秒',cost:'中',src:['新'],
+ hook:'把队友扔过深渊，并在半空中替他冻出一个落点。',
+ sb:[
+  `${G(4,38)}${G(84,100)}${O(86,52,12,14,'ok')}${P(18,68,'fire')}${P(32,68,'ice')}${T(58,82,'过不去','sk-t3')}`,
+  `${G(4,38)}${G(84,100)}${O(86,52,12,14,'ok')}${P(18,68,'fire')}${P(58,34,'ice')}${A(34,62,54,40,'mInk','s-soft','stroke-dasharray="3 3"')}${T(40,82,'扔出去','sk-t3')}`,
+  `${G(4,38)}${G(84,100)}${O(86,52,12,14,'ok')}${B(66,42,22,6,'ice',.6)}${P(76,36,'ice')}${BURST(88,48)}${T(34,82,'空中冻落点','sk-t3')}`],
+ must2:'投掷者和落点制造者必须是两个人——被扔出去的人在空中无法自救，而唯一能救他的人是站在原地的那个。这是"信任"最物理的形式。',
+ replay:'抛掷角度完全靠手感，成功的那一下两个人的叫声就是奖励。可以加距离纪录，但它本质上是熟练度游戏。',
+ risk:'投掷物理 + 空中施放 + 摔落伤害与复活点。空中施放需要网络预测宽容（不许因为 30ms 抖动变成摔死）。'},
+/* ---------------- 喜剧 ---------------- */
+{id:'S06',title:'一条缆绳',cat:'fun',verb:'拽 / 烧断',emo:'怕 + 背叛诱惑',dur:'30 秒',cost:'低',src:['B5','D1'],
+ hook:'一条缆绳连着你们俩：他冲刺，你就摔倒。',
+ sb:[
+  `${G(4,100)}${LN(34,70,64,70,'s-ink','stroke-width="1.6"')}${P(28,68,'fire')}${P(70,68,'ice')}${A(28,60,46,60,'mFire','s-fire')}${T(52,20,'一冲刺','sk-t3')}`,
+  `${G(4,46)}${G(80,100)}${LN(22,66,54,74,'s-bad','stroke-width="1.6"')}${P(16,68,'fire')}${SLIP(14,56)}${P(56,84,'ice')}${T(52,20,'你被拽下去','sk-t3')}`,
+  `${G(4,46)}${G(80,100)}${LN(22,66,30,70,'s-bad','stroke-width="1.6"')}${BURST(34,72)}${P(18,68,'fire')}${P(56,84,'ice')}${T(52,20,'断绳＝放弃他','sk-t3')}`],
+ must2:'绳子两端是两份相反的诉求：一端要自由、一端要救援。熔可以烧断绳子换自由，代价是永远失去救援与共享能量；霜可以加固绳子，但会缩短两人的最大距离。去掉一个人，绳子就没有意义。',
+ replay:'恐惧 + 背叛诱惑。每局都会出现那个"要不要烧断"的瞬间，而答案取决于对方是谁、上一局发生了什么——这种重玩性来自人际，不来自关卡。',
+ risk:'这是成本最低的一条：Jolt 关节现成。要调的是拉力手感与断绳判定，别做成橡皮筋，也别做成铁棍。'},
+{id:'S07',title:'漂流冰筏',cat:'fun',verb:'撑 / 化',emo:'笑',dur:'30 秒',cost:'中',src:['B2'],
+ hook:'一块正在融化的冰筏，两个人各站一端，岩浆在下面。',
+ sb:[
+  `${B(4,60,96,26,'fire',.3)}${B(28,54,48,9,'ice',.55)}${P(38,48,'fire')}${P(66,48,'ice')}${T(52,40,'岩浆河','sk-t3')}`,
+  `${B(4,60,96,26,'fire',.3)}${B(38,54,26,9,'ice',.5)}${P(46,48,'fire')}${P(58,48,'ice')}${S(70,52)}${T(52,40,'化一点＝浮一点','sk-t3')}`,
+  `${B(4,60,96,26,'fire',.3)}${B(60,54,30,9,'ice',.5)}${P(68,48,'fire')}${P(82,48,'ice')}${B(92,44,12,42,'ground2',.85)}${T(52,40,'冻住水面登岸','sk-t3')}`],
+ must2:'载具的稳定性来自两个人的站位与施放：熔加热会让筏上浮但缩小，霜降温会加大筏但变沉，而任何一方施放都会让另一端的人失衡。翻船永远是因为某个人多按了一下。',
+ replay:'物理涌现：翻船、超载、熔穿筏底，每局都不一样，而且好笑。这类重玩性不需要随机生成关卡，只需要两个会手滑的人。',
+ risk:'浮力 + 破碎。可以先做离散三档（大/中/小）而不是连续融化，把稳定性调好再谈真实感。'},
+{id:'S08',title:'锚点攀爬',cat:'fun',verb:'锚 / 解冻',emo:'怕',dur:'25 秒',cost:'中',src:['新'],
+ hook:'一个人必须冻住自己当锚，另一个人才爬得上去——但冰会化。',
+ sb:[
+  `${G(4,100)}${B(40,16,20,58,'ground2',.85)}${O(40,16,20,58,'line')}${P(20,68,'ice')}${P(74,68,'fire')}${T(52,82,'够不着顶上','sk-t3')}`,
+  `${G(4,100)}${B(40,16,20,58,'ground2',.85)}${O(40,16,20,58,'line')}${O(24,56,16,18,'ice')}${P(32,66,'ice')}${LN(36,62,52,32,'s-ink','stroke-width="1.4"')}${P(56,26,'fire')}${T(52,82,'一人当锚','sk-t3')}`,
+  `${G(4,100)}${B(40,16,20,58,'ground2',.85)}${O(40,16,20,58,'line')}${O(24,56,16,18,'ice')}${CRK(32,58)}${LN(50,22,34,58,'s-ice','stroke-width="1.4"')}${P(52,10,'fire')}${T(52,82,'冰锚在化','sk-t3')}`],
+ must2:'一个人必须是静止的锚，另一个人必须是移动的负载——这两个角色不能由同一个人同时担任。锚点还有倒计时：撑太久就会融化，所以"忍多久"是留给下面那个人的决定。',
+ replay:'时间压力下的手忙脚乱，以及"锚撑不住"的那一瞬间。看对方悬在半空是这类游戏最有效的叫声来源。',
+ risk:'冻结自身的状态机 + 变脆倒计时。要注意被冻住的人怎么玩（微操作还是纯等待），别让他变成看客。'},
+{id:'S09',title:'一起抬',cat:'fun',verb:'抬 / 稳',emo:'抖到笑',dur:'30 秒',cost:'中',src:['新'],
+ hook:'两个人抬一件易碎的东西走过窄桥，谁先松手谁就毁了它。',
+ sb:[
+  `${G(4,100,56)}${O(40,34,24,16,'line')}${P(36,50,'fire')}${P(68,50,'ice')}${T(52,84,'抬过去','sk-t3')}`,
+  `${G(4,100,56)}<g transform="rotate(-12 52 42)">${O(40,34,24,16,'line')}</g>${P(36,50,'fire')}${P(70,50,'ice')}${SLIP(74,44)}${T(52,84,'谁松手就完了','sk-t3')}`,
+  `${G(4,100,56)}${O(40,34,24,16,'line')}${B(46,50,14,6,'ice',.6)}${P(36,50,'fire')}${P(70,50,'ice')}${T(52,84,'冻住一秒换手','sk-t3')}`],
+ must2:'物品的稳定需要两个支点：一个人松手，另一个人立刻失去平衡。而两个人的手都是元素手——霜可以短暂冻住它来换手，熔则会让它变得更脆。',
+ replay:'抖动与手滑本身就是表演，重试只要 10 秒。它的乐趣不是解谜，而是"两个人一起憋住不笑"。',
+ risk:'共享抬举等于一个双人约束体，物理稳定性很难调（会抖、会弹）。建议先做成"两根绳子吊着"，而不是真刚体接触。'},
+/* ---------------- 取舍 ---------------- */
+{id:'S10',title:'回头救人',cat:'trade',verb:'扛 / 决定',emo:'内疚',dur:'40 秒',cost:'中',src:['C3'],
+ hook:'潮汐已经推进到中途，被埋的是他，回去救就要两个人一起死。',
+ sb:[
+  `${H(4,14,24,74)}${G(4,100)}${P(70,64,'fire')}${B(52,56,28,18,'ground2',.85)}${O(52,56,28,18,'line')}${P(86,68,'ice')}${T(30,10,'潮汐','sk-t3')}`,
+  `${H(4,14,34,74)}${G(4,100)}${A(86,62,62,62,'mFire','s-fire')}${B(52,40,28,16,'ground2',.85)}${O(52,40,28,16,'line')}${P(70,64,'fire')}${P(86,68,'ice')}${T(30,10,'潮汐','sk-t3')}`,
+  `${H(4,14,50,74)}${G(4,100)}${P(74,68,'fire')}${P(88,68,'ice')}${T(30,10,'潮汐','sk-t3')}`],
+ must2:'"救人"这件事本身就需要另一个人承担代价：外面那个人要决定是否回头、还要活着把两个人带出去。单人游戏里不存在这个选择，只会变成一个操作题。',
+ replay:'决策每次不同：谁去救、值不值、还能不能再救一次。系统不需要新关卡，只需要让潮汐速度随"你们还剩多少空间"变化。',
+ risk:'持续区域判定 + 救援交互 + 被埋状态。注意别让被埋的人没事干——他应该有"能不能自己爬出来"的挣扎操作。'},
+{id:'S11',title:'取暖是一种伤害',cat:'trade',verb:'烤 / 浸',emo:'内疚 + 试探',dur:'30 秒',cost:'中',src:['A2','A6'],
+ hook:'你们各自取暖的方式，都是对另一个人的伤害。',
+ sb:[
+  `${G(4,100)}${B(10,62,36,12,'ice',.3)}${B(60,58,40,16,'fire',.26)}${P(26,68,'ice')}${P(78,68,'fire')}${A(26,54,26,40,'mIce','s-ice')}${A(78,52,78,38,'mFire','s-fire')}${T(52,22,'各取所需','sk-t3')}`,
+  `${G(4,100)}${B(10,62,36,12,'ice',.3)}${B(60,58,40,16,'fire',.26)}${P(26,68,'ice')}${P(78,68,'fire')}${BURST(26,58)}${S(30,52)}${T(52,22,'顺便把水烧开','sk-t3')}`,
+  `${G(4,100)}${B(10,62,36,12,'ice',.3)}${B(60,58,40,16,'fire',.26)}${P(26,68,'ice')}${P(78,68,'fire')}${O(70,60,16,14,'ice')}${T(52,22,'你的解药是我的毒','sk-t3')}`],
+ must2:'两个人的舒适区互为毒药：熔取暖时会把霜所在的水烧开，霜降温时会让熔冻僵变慢。任何一方的自救都是对另一方的攻击，所以这里没有"各玩各的"。',
+ replay:'自私与利他的边界会被反复试探，而且两个人在几局之后会形成自己的默契与"报复史"。共享元素池（旧 A2）在这里变成代价曲线，而不是一条资源界面。',
+ risk:'把"温度标尺"改成物理蔓延（火焰体积、霜冻面积）是画面与手感的活。判定必须连续，否则玩家无法理解自己为什么受伤。'},
+/* ---------------- 信息 ---------------- */
+{id:'S12',title:'暗号区',cat:'info',verb:'约定 / 报时',emo:'紧张',dur:'30 秒',cost:'低',src:['D5','D3'],
+ hook:'有些区域里你们互相看不见，只能靠事前三下敲击约定节奏。',
+ sb:[
+  `${G(4,100)}${P(28,68,'fire')}${P(76,68,'ice')}${O(38,34,34,18,'line')}${T(55,46,'短 短 长','sk-t3')}${T(52,84,'事前约定','sk-t3')}`,
+  `${H(36,20,34,68)}${G(4,100)}${P(52,68,'fire')}${P(88,68,'ice')}${O(44,32,20,14,'bad')}${X(54,39)}${T(52,84,'互相看不见','sk-t3')}`,
+  `${G(4,100)}${B(82,46,16,28,'ok',.3)}${P(40,68,'fire')}${P(72,68,'ice')}${BURST(56,56)}${T(52,84,'两拍后同时动','sk-t3')}`],
+ must2:'信息被切断之后，交流只能来自事前约定，而这需要两个人：一个负责给信号，一个负责在看不见的情况下相信它。一个人时这里根本没有可玩的内容。',
+ replay:'暗号由玩家自己发明——玩家自创语言就是内容。同一个关卡换一组朋友、换一套暗号，难度和笑点完全不同，这也是双人游戏最好的天然变量。',
+ risk:'区域遮罩 + 精确时序判定。别用语音当兜底：干扰区要真的切断画面与声音，否则整条机制立刻失效。'},
+{id:'S13',title:'值班坏人',cat:'info',verb:'偷偷改',emo:'疑心',dur:'60 秒一换',cost:'中',src:['D2','D1'],
+ hook:'每 60 秒，你们中会有一个人拿到"偷偷改一处地形"的权限。',
+ sb:[
+  `${G(4,100)}${P(30,68,'fire')}${P(74,68,'ice')}${DIA(52,24)}${OC(52,24,13,'warn')}${T(52,8,'60 秒','sk-t3')}`,
+  `${G(4,100)}${P(30,68,'fire')}${P(74,68,'ice')}${B(44,58,22,14,'ground2',.85)}${T(55,50,'？','sk-t5')}`,
+  `${G(4,100)}${P(30,68,'fire')}${P(74,68,'ice')}${B(44,58,22,14,'ground2',.85)}${BURST(74,62)}${T(52,8,'另一个人才发现','sk-t3')}`],
+ must2:'权限必须轮换：一个人持有改地形的权力，另一个人承受后果且不知道被改了什么。两个人同时在被观察、被欺骗，这个结构单人无法成立。',
+ replay:'权力反转 + 情报不对称：每 60 秒局势重排一次。重玩性来自"我这次会怎么整你"以及"他上次是不是也这么干过"。',
+ risk:'权限切换与秘密改动的同步：对方看到的世界必须延迟显示改动。这是网络层最容易出 bug 的一条，建议最后做。'},
+/* ---------------- 自产 ---------------- */
+{id:'S14',title:'互设陷阱',cat:'self',verb:'出题 / 解题',emo:'好胜',dur:'60 秒以上',cost:'高',src:['F5'],
+ hook:'你出题，他解；他的用时决定你下一局有多难。',
+ sb:[
+  `${O(8,20,44,48,'line')}${LN(22,20,22,68,'s-line','stroke-width=".8" opacity=".6"')}${B(26,40,12,10,'warn',.6)}${G(60,100)}${P(80,68,'fire')}${T(52,84,'A 出题','sk-t3')}`,
+  `${G(4,100)}${B(20,58,24,16,'ground2',.85)}${P(46,50,'ice')}${A(46,44,70,56,'mIce','s-ice')}${T(52,84,'B 来解','sk-t3')}`,
+  `${G(4,100)}${B(16,50,72,8,'panel',1)}${B(16,50,46,8,'warn',.85)}${T(52,84,'评分决定下一局难度','sk-t3')}`],
+ must2:'出题与解题分属两个人，评分回路也要双方参与：设计者看到的是"对方怎么破我的题"，解题者看到的是"这个人的思路"。这是唯一能让内容永不枯竭的结构。',
+ replay:'玩家自产内容。整套规则只有十几个机关，但题目的数量等于玩家数量——这是三十条旧方案里唯一真正解决内容量的一条。',
+ risk:'关卡编辑器 + 谜题分享 + 评分。成本最高，必须放在动作层已经验证之后——不然你做出的编辑器会围绕一个不好玩的动词。'}
+];
+
+/* ---------------- 三种重玩循环 ---------------- */
+const LOOPS=[
+ {n:'①',t:'同一段反复刷（评分制）',src:'C1 · C2 改造',cost:'低',
+  body:'把一条情境卡做成 15–40 秒的片段，加目标时间、无伤、同步率。失败点密集，重试只要 10 秒。',
+  why:'把"知道答案"换成"做得更好"——这是最便宜、也最不需要内容量的重玩来源。',
+  foot:'第一周只做这个。'},
+ {n:'②',t:'每日种子',src:'F4',cost:'中',
+  body:'同一天所有玩家拿到同一组布局与参数，异步比分数。用的是别人已经验证过的动作，只是换条件。',
+  why:'内容量不足时的廉价替代：随机的是约束与参数，不是"钥匙放在哪"。',
+  foot:'前提是玩法本身可刷，否则只是换个位置解题。'},
+ {n:'③',t:'互设陷阱',src:'F5',cost:'高',
+  body:'玩家出题、玩家解题，评分反向决定下一局难度；编辑器只暴露当前关卡已有的机关。',
+  why:'唯一真正无限的内容来源，也是熟人组合最长的留存手段。',
+  foot:'成本最高，必须最后做。'}
+];
+
+/* ---------------- 旧库处置（30 条逐条） ---------------- */
+const DISPOSE=[
+ ['A1','元素沉淀','up','→ S02 · S03：从"地表状态层"变成跑动中的动作'],
+ ['A2','共用元素池','rw','并入 S11，作为"代价曲线"，不再做独立资源界面'],
+ ['A3','镜像双生','dn','单关实验：乐趣在谈话，没有动作'],
+ ['A4','时间错位','cut','只制造困惑、不制造动作，且时基风险最高'],
+ ['A5','记录与重现','rw','降为训练场与异步替身，不做核心玩法'],
+ ['A6','温度标尺','rw','并入 S11：标尺 → 会蔓延的火焰与霜冻'],
+ ['B1','熔铸工坊','dn','长线沙盒，等动作层立住再评估'],
+ ['B2','热力浮沉','up','→ S07：共乘载具本身就够好笑'],
+ ['B3','三态水利','rw','并入 S01 · S04，当物理底层，不做谜题'],
+ ['B4','自由凿掘','dn','中期押注，前置是确定性地形同步'],
+ ['B5','天平与配重','cut','门槛高、反馈慢、没有情绪'],
+ ['C1','双线并行','cut','是流程不是体验：把"节奏对齐"做成机制，没有画面'],
+ ['C2','升温竞时','rw','并入 S02 · S03，只当压力源'],
+ ['C3','逼近的边界','up','→ S10：把"回头"从数值变成道德选择'],
+ ['C4','双人对峙机关','rw','降为 S13 里的一个道具，单独使用无趣'],
+ ['D1','角色互换','rw','并入 S13（权力反转的动作版）'],
+ ['D2','一人是关卡','up','→ S13'],
+ ['D3','观测者','rw','并入 S12，但必须加时间压力'],
+ ['D4','分段交接','cut','是流程，不是体验'],
+ ['D5','受限通讯','up','→ S12：玩家自创暗号＝自产内容'],
+ ['E1','双视角真相','dn','主线叙事，一次性内容，别拿来填留存'],
+ ['E2','独立选择','dn','主线叙事，一次性内容'],
+ ['E3','记忆重构','rw','只留"带新人"的难度自适应，不做局内变体'],
+ ['E4','无声叙事','dn','美术与主线方向'],
+ ['E5','前人的痕迹','rw','只留"失败位置标记"，砍掉留言与审核链路'],
+ ['F1','元素据点','cut','当前瓶颈不是内容量'],
+ ['F2','生态演化','cut','不可预测 ≠ 有趣；性能与确定性成本都高'],
+ ['F3','极寒营地生存','cut','四套系统叠起来是负担，不是乐趣'],
+ ['F4','随机房间拼装','rw','保留为"结构"：放进每日种子，它不是玩法'],
+ ['F5','互设谜题','up','→ S14：唯一真正无限的内容来源']
+];
+const ACTN={up:['升级为情境卡','up'],rw:['改造后并入','rw'],dn:['降级为主线内容','dn'],cut:['砍掉','cut']};
+
+/* ---------------- 一周计划 ---------------- */
+const PLAN=[
+ ['Day 1–2','做一把"手感椅子"','一个房间、一池水、两个胶囊体、一个键。无 UI、无目标、无结算。只测三个动词：<b>冻结承重面 / 熔化承重面 / 蒸汽推进</b>。这一版不验证任何方案，只验证"按下去爽不爽"。'],
+ ['Day 3','五个人，五分钟','每人玩五分钟，你只看三件事：<b>有没有自发地互相整、有没有笑或叫、有没有主动再来一次</b>。不解释玩法、不引导、不暗示目标。'],
+ ['Day 4–5','挑出活下来的动词','把出现次数最多的那个动作做成 S01 / S02 的 15 秒雏形，加计时、重试、结算。目标是"失败一次就想立刻重来"。'],
+ ['第 2 周','只加一条重玩循环','只做 ① 评分制（同一段反复刷），别碰随机房间与编辑器。先证明"同一个动作能刷十次"，再上结构。']
+];
+</script><script>
+/* ============================================================
+   界面层
+   ============================================================ */
+const $=id=>document.getElementById(id);
+const COSTC={'低':'low','中':'mid','高':'high'};
+
+function renderHero(){
+  const max=Math.max(...Object.keys(CATS).map(k=>DATA.filter(d=>d.cat===k).length));
+  $('cats').innerHTML=Object.keys(CATS).map(k=>{
+    const n=DATA.filter(d=>d.cat===k).length;
+    return `<div class="catrow"><span>${CATS[k].n}</span><i style="background:${CATS[k].c};width:${n/max*100}%"></i><span>${n}</span></div>`;
+  }).join('');
+  const c={'低':0,'中':0,'高':0}; DATA.forEach(d=>c[d.cost]++);
+  $('stats').innerHTML=`
+    <div class="stat"><div class="n">${DATA.length}</div><div class="l">张情境卡</div></div>
+    <div class="stat"><div class="n" style="color:#34d399">${c['低']}</div><div class="l">低 · 一周内就能做出来</div></div>
+    <div class="stat"><div class="n" style="color:#fbbf24">${c['中']+c['高']}</div><div class="l">中/高 · 需要新系统</div></div>`;
+}
+
+const F={cat:'all',cost:'all',q:''};
+function match(d){
+  if(F.cat!=='all'&&d.cat!==F.cat) return false;
+  if(F.cost!=='all'&&d.cost!==F.cost) return false;
+  if(F.q){
+    const hay=[d.id,d.title,d.verb,d.emo,d.hook,d.must2,d.replay,d.risk,CATS[d.cat].n,d.src.join(' ')].join(' ').toLowerCase();
+    if(hay.indexOf(F.q.toLowerCase())<0) return false;
+  }
+  return true;
+}
+const chip=(k,v,label,cnt,color)=>`<span class="chip" data-f="${k}" data-v="${v}">${color?`<i class="dot" style="background:${color}"></i>`:''}${label}${cnt!=null?` <span class="cnt">${cnt}</span>`:''}</span>`;
+function renderFilters(){
+  $('filters').innerHTML=`
+    <div class="frow"><span class="flabel">类别</span><div class="chips" id="fCat"></div></div>
+    <div class="frow"><span class="flabel">成本</span><div class="chips" id="fCost"></div></div>
+    <div class="frow"><span class="flabel">搜索</span><input id="q" type="search" placeholder="动词或关键词，例如：烧断、绳子、暗号、抛"><span class="resline" id="resline"></span></div>`;
+  const cnt=fn=>DATA.filter(fn).length;
+  $('fCat').innerHTML=chip('cat','all','全部',DATA.length)+Object.keys(CATS).map(k=>chip('cat',k,CATS[k].n,cnt(d=>d.cat===k),CATS[k].c)).join('');
+  $('fCost').innerHTML=chip('cost','all','全部',DATA.length)+['低','中','高'].map(c=>chip('cost',c,c,cnt(d=>d.cost===c))).join('');
+  markChips();
+}
+function markChips(){document.querySelectorAll('.chip[data-f]').forEach(el=>el.classList.toggle('on',F[el.dataset.f]===el.dataset.v));}
+function applyFilters(){
+  let shown=0;
+  DATA.forEach(d=>{const ok=match(d); if(ok) shown++;
+    const el=document.getElementById('c-'+d.id); if(el) el.classList.toggle('hide',!ok);});
+  const rl=$('resline');
+  if(rl) rl.textContent=shown?`显示 ${shown} / ${DATA.length} 张`:`没有匹配（共 ${DATA.length} 张）`;
+  markChips();
+}
+function cardHTML(d){
+  const c=CATS[d.cat];
+  return `<article class="card sc${match(d)?'':' hide'}" id="c-${d.id}" style="--acc:${c.c}">
+    <div class="sctop"><span class="sid" style="color:${c.c};border-color:${c.c}66">${d.id}</span><h3>${d.title}</h3><span class="verb">${d.verb}</span></div>
+    <p class="hook">${d.hook}</p>
+    <div class="sbwrap">${SB(d.sb[0],d.sb[1],d.sb[2])}</div>
+    <div class="meta">
+      <span class="pill" style="border-color:${c.c}66;color:${c.c}">${c.n}</span>
+      <span class="pill">情绪 · ${d.emo}</span>
+      <span class="pill">单次 · ${d.dur}</span>
+      <span class="pill cost ${COSTC[d.cost]}">成本 · ${d.cost}</span>
+      <span class="pill">旧库 · ${d.src.join(' ')}</span>
+    </div>
+    <div class="blk me"><h4>为什么必须两个人</h4><p>${d.must2}</p></div>
+    <div class="blk go"><h4>靠什么让人再玩一局</h4><p>${d.replay}</p></div>
+    <div class="blk risk"><h4>工程上要什么 / 风险</h4><p>${d.risk}</p></div>
+    <div class="crit"><span>✓ 一个动词</span><span>✓ 会有反应</span><span>✓ 去掉一个人就不成立</span></div>
+  </article>`;
+}
+function renderCards(){
+  const order=Object.keys(CATS);
+  $('cardArea').innerHTML=DATA.slice().sort((a,b)=>order.indexOf(a.cat)-order.indexOf(b.cat)).map(cardHTML).join('');
+}
+function renderLoops(){
+  $('loopArea').innerHTML=LOOPS.map(l=>`<div class="card loop">
+    <div class="lh"><span class="lv">${l.n}</span><h3>${l.t}</h3></div>
+    <p>${l.body}</p>
+    <p>${l.why}</p>
+    <div class="meta"><span class="pill">旧库 · ${l.src}</span><span class="pill cost ${COSTC[l.cost]}">成本 · ${l.cost}</span></div>
+    <div class="foot">${l.foot}</div></div>`).join('');
+}
+function renderDispose(){
+  $('dispBody').innerHTML=DISPOSE.map(r=>`<tr>
+    <td class="idc">${r[0]}</td><td>${r[1]}</td>
+    <td class="act"><span class="badge ${ACTN[r[2]][1]}">${ACTN[r[2]][0]}</span></td>
+    <td>${r[3]}</td></tr>`).join('');
+}
+function renderPlan(){
+  $('planArea').innerHTML=PLAN.map(p=>`<div class="card step">
+    <div class="when">${p[0]}</div><div><h4>${p[1]}</h4><p>${p[2]}</p></div></div>`).join('');
+}
+function init(){
+  renderHero(); renderFilters(); renderCards(); renderLoops(); renderDispose(); renderPlan(); applyFilters();
+  $('q').addEventListener('input',e=>{F.q=e.target.value.trim();applyFilters();});
+  $('themeBtn').addEventListener('click',()=>{
+    const html=document.documentElement, dark=html.dataset.theme==='dark';
+    html.dataset.theme=dark?'light':'dark';
+    $('themeBtn').textContent=dark?'🌙 深色':'☀️ 浅色';
+  });
+  document.addEventListener('click',e=>{
+    const c=e.target.closest('.chip[data-f]');
+    if(c){F[c.dataset.f]=c.dataset.v;applyFilters();}
+  });
+}
+if(typeof document!=='undefined'&&document.getElementById) init();
+</script>
+</body>
+</html>

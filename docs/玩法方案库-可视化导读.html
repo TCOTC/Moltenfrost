@@ -1,0 +1,1201 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>《熔霜》玩法方案库 · 可视化</title>
+<style>
+*{box-sizing:border-box}
+:root{
+  --font:"Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans SC",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --bg:#0d1117;--bg2:#121924;--panel:#161e2b;--panel2:#1d2735;--line:#293345;--line2:#3a4760;
+  --txt:#e8eef7;--txt2:#9db0c8;
+  --fire:#ff7a45;--ice:#38bdf8;--ok:#34d399;--warn:#fbbf24;--bad:#f87171;
+  --sk-1:#e8eef7;--sk-2:#9db0c8;--sk-line:#3a4760;--sk-panel:#1b2432;--sk-ground:#26334a;--sk-ground2:#1d2734;--sk-bg:#0d1117;
+  --shadow:0 12px 34px rgba(0,0,0,.42);
+}
+html[data-theme="light"]{
+  --bg:#f5f7fb;--bg2:#ffffff;--panel:#ffffff;--panel2:#f1f5fa;--line:#e3e9f2;--line2:#c9d5e6;
+  --txt:#0f172a;--txt2:#5a6b83;
+  --fire:#e2570d;--ice:#0284c7;--ok:#059669;--warn:#b45309;--bad:#dc2626;
+  --sk-1:#16233a;--sk-2:#5a6b83;--sk-line:#c9d5e6;--sk-panel:#f1f6fc;--sk-ground:#dfe8f4;--sk-ground2:#cfdbeb;--sk-bg:#ffffff;
+  --shadow:0 10px 26px rgba(15,23,42,.08);
+}
+html,body{margin:0}
+body{
+  background:
+    radial-gradient(1100px 560px at 84% -12%,rgba(255,122,69,.13),transparent 62%),
+    radial-gradient(900px 480px at 6% -4%,rgba(56,189,248,.13),transparent 62%),
+    var(--bg);
+  color:var(--txt);font-family:var(--font);font-size:14px;line-height:1.72;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1260px;margin:0 auto;padding:0 20px}
+a{color:inherit}
+/* ---------- topbar ---------- */
+.topbar{position:sticky;top:0;z-index:30;backdrop-filter:blur(10px);background:var(--bg);background:color-mix(in srgb,var(--bg) 82%,transparent);border-bottom:1px solid var(--line)}
+.tb{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:60px;height:auto;padding:9px 0;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:11px;min-width:0}
+.logo{width:32px;height:32px;flex:0 0 32px;border-radius:10px;display:grid;place-items:center;font-size:17px;
+  background:linear-gradient(135deg,rgba(255,122,69,.85),rgba(56,189,248,.85));color:#0b1017}
+.brand strong{display:block;font-size:14.5px;line-height:1.3}
+.bsub{display:block;font-size:11.5px;color:var(--txt2);line-height:1.3}
+.tnav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.tnav a{font-size:12.5px;color:var(--txt2);text-decoration:none;padding:5px 9px;border-radius:9px;border:1px solid transparent}
+.tnav a:hover{color:var(--txt);background:var(--panel2);border-color:var(--line)}
+button.ghost{font-family:var(--font);font-size:12.5px;color:var(--txt2);background:var(--panel2);border:1px solid var(--line2);
+  padding:5px 11px;border-radius:10px;cursor:pointer}
+button.ghost:hover{color:var(--txt)}
+/* ---------- sections ---------- */
+section{margin:30px 0}
+h2.sec{font-size:19px;margin:0 0 3px;letter-spacing:.01em}
+h2.sec2{font-size:15px;margin:26px 0 10px;color:var(--txt)}
+p.sub{color:var(--txt2);margin:0 0 14px;font-size:12.8px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
+/* ---------- hero ---------- */
+.hero{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;margin-top:24px}
+@media(max-width:940px){.hero{grid-template-columns:1fr}}
+.hero-main{padding:22px 24px}
+.hero-main h1{font-size:24px;margin:0 0 10px;line-height:1.35;letter-spacing:.01em}
+.lead{color:var(--txt2);font-size:13.2px;margin:0 0 12px}
+.lead b{color:var(--fire)}
+.statusrow{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
+.pill{font-size:11.5px;border-radius:999px;padding:3px 10px;border:1px solid var(--line2);background:var(--panel2);color:var(--txt2)}
+.pill.ok{color:#34d399;border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.12)}
+html[data-theme="light"] .pill.ok{color:#047857}
+.pill.no{color:#f87171;border-color:rgba(248,113,113,.45);background:rgba(248,113,113,.12)}
+html[data-theme="light"] .pill.no{color:#b91c1c}
+.hint{font-size:12.4px;color:var(--txt2);background:var(--panel2);border-left:3px solid var(--ice);border-radius:0 10px 10px 0;padding:8px 12px;margin:0 0 14px}
+.hint b{color:var(--txt)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
+@media(max-width:560px){.stats{grid-template-columns:repeat(2,1fr)}}
+.stat{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:9px 12px}
+.stat .n{font-size:22px;font-weight:800;line-height:1.25}
+.stat .l{font-size:11.5px;color:var(--txt2)}
+.stat.low .n{color:#34d399}.stat.mid .n{color:#fbbf24}.stat.high .n{color:#f87171}
+.hero-side{padding:20px 20px 14px}
+.side-h{font-size:13px;margin:0 0 9px;color:var(--txt2);letter-spacing:.05em}
+.costlegend{list-style:none;margin:0 0 18px;padding:0;display:grid;gap:8px}
+.costlegend li{display:grid;grid-template-columns:52px 1fr;gap:10px;font-size:12.4px;color:var(--txt2);align-items:start}
+.formdist{display:grid;gap:7px;font-size:12px}
+.fd{display:grid;grid-template-columns:88px 1fr 30px;align-items:center;gap:8px;color:var(--txt2)}
+.fd .fdbar{height:9px;border-radius:5px;background:var(--panel2);overflow:hidden}
+.fd .fdbar i{display:block;height:100%;border-radius:5px}
+/* ---------- cost chip ---------- */
+.cost{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:2px 9px;font-size:11.5px;font-weight:700}
+.cost.low{color:#34d399;background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.4)}
+.cost.mid{color:#fbbf24;background:rgba(251,191,36,.14);border:1px solid rgba(251,191,36,.4)}
+.cost.high{color:#f87171;background:rgba(248,113,113,.14);border:1px solid rgba(248,113,113,.4)}
+html[data-theme="light"] .cost.low{color:#047857}
+html[data-theme="light"] .cost.mid{color:#a16207}
+html[data-theme="light"] .cost.high{color:#b91c1c}
+/* ---------- matrix ---------- */
+.mxwrap{overflow-x:auto;padding:4px}
+table.mx{border-collapse:separate;border-spacing:0;width:100%;min-width:900px}
+table.mx th,table.mx td{border-bottom:1px solid var(--line);padding:7px 6px;text-align:center;font-weight:500}
+table.mx tr:last-child th,table.mx tr:last-child td{border-bottom:0}
+table.mx thead th{font-size:11.5px;color:var(--txt2);line-height:1.35;padding-bottom:9px}
+table.mx thead th span{display:block;font-size:10px;opacity:.72}
+th.rowh{text-align:left;width:186px;padding-left:14px}
+th.rowh .cn{display:block;font-size:10.5px;color:var(--txt2);font-weight:400}
+th.rowh .rt{font-size:12.5px}
+td.mxcell{cursor:pointer;border-radius:10px}
+td.mxcell:hover{background:var(--panel2)}
+td.mxcell.has{background:var(--panel2)}
+.mxdot{display:inline-flex;align-items:center;justify-content:center;min-width:31px;height:21px;border-radius:7px;
+  font-size:11px;font-weight:700;border:1px solid var(--line2);background:var(--panel);cursor:pointer;margin:2px;padding:0 3px}
+.mxdot:hover{transform:translateY(-1px)}
+.mxdot.cl{color:#34d399;border-color:rgba(52,211,153,.55)}
+.mxdot.cm{color:#fbbf24;border-color:rgba(251,191,36,.55)}
+.mxdot.ch{color:#f87171;border-color:rgba(248,113,113,.55)}
+html[data-theme="light"] .mxdot.cl{color:#047857}
+html[data-theme="light"] .mxdot.cm{color:#a16207}
+html[data-theme="light"] .mxdot.ch{color:#b91c1c}
+.minibar{display:flex;height:7px;border-radius:4px;overflow:hidden;margin-top:7px;background:var(--panel2)}
+.minibar i{display:block;height:100%}
+/* ---------- filters ---------- */
+.filters{padding:14px 16px;margin-bottom:16px;display:grid;gap:10px}
+.frow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.flabel{font-size:11.5px;color:var(--txt2);width:52px;flex:0 0 52px;letter-spacing:.05em}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line2);background:var(--panel2);color:var(--txt2);
+  border-radius:999px;padding:3px 11px;font-size:12px;cursor:pointer;user-select:none;transition:.14s}
+.chip:hover{color:var(--txt);border-color:var(--txt2)}
+.chip.on{color:var(--txt);background:linear-gradient(135deg,rgba(255,122,69,.24),rgba(56,189,248,.24));border-color:var(--line2)}
+.chip .cnt{font-size:10.5px;opacity:.72}
+.chip i.dot{width:8px;height:8px;border-radius:3px;display:block}
+input#q{font-family:var(--font);font-size:12.5px;color:var(--txt);background:var(--panel2);border:1px solid var(--line2);
+  border-radius:10px;padding:6px 11px;min-width:220px;outline:none}
+input#q:focus{border-color:var(--ice)}
+.resline{font-size:12px;color:var(--txt2)}
+/* ---------- cards ---------- */
+.group{--acc:#38bdf8;margin:26px 0 0}
+.grouphead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 12px}
+.gtag{width:40px;height:40px;flex:0 0 40px;border-radius:12px;display:grid;place-items:center;font-weight:800;font-size:18px;color:#0b1017;
+  background:var(--acc);background:linear-gradient(135deg,var(--acc),color-mix(in srgb,var(--acc) 35%,#38bdf8))}
+.gtitle{font-size:16.5px;font-weight:700;line-height:1.3}
+.gintro{font-size:12.5px;color:var(--txt2);max-width:760px}
+.gcount{font-size:11.5px;color:var(--acc);border:1px solid var(--line2);border-radius:999px;padding:2px 10px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(352px,1fr));gap:15px}
+@media(max-width:520px){.cards{grid-template-columns:1fr}}
+.card.scheme{padding:15px 15px 13px;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden;--acc:#38bdf8}
+.card.scheme::before{content:"";position:absolute;left:0;top:0;width:100%;height:3px;background:linear-gradient(90deg,var(--acc),transparent 78%)}
+.ctop{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.idb{font-weight:800;font-size:12px;color:var(--acc);border:1px solid var(--line2);border-radius:8px;padding:1px 8px;letter-spacing:.03em}
+.card.scheme h3{font-size:16.5px;margin:0;line-height:1.3}
+.msvg{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:3px 4px}
+svg.sch{width:100%;height:auto;display:block}
+svg.sch text{font-family:var(--font)}
+.sk-t{font-size:10px;font-weight:700;fill:var(--sk-1)}
+.sk-t2{font-size:9px;font-weight:500;fill:var(--sk-2)}
+.sk-t3{font-size:8.5px;font-weight:600;fill:var(--sk-2)}
+.sk-t4{font-size:13px;font-weight:800;fill:var(--sk-1)}
+.sk-t5{font-size:16px;font-weight:800;fill:var(--sk-1)}
+.f-fire{fill:#ff7a45}.f-ice{fill:#38bdf8}.f-ok{fill:#34d399}.f-warn{fill:#fbbf24}.f-bad{fill:#f87171}
+.f-ink{fill:var(--sk-1)}.f-soft{fill:var(--sk-2)}.f-panel{fill:var(--sk-panel)}.f-bg{fill:var(--sk-bg)}
+.f-ground{fill:var(--sk-ground)}.f-ground2{fill:var(--sk-ground2)}
+.s-fire{stroke:#ff7a45}.s-ice{stroke:#38bdf8}.s-ok{stroke:#34d399}.s-warn{stroke:#fbbf24}.s-bad{stroke:#f87171}
+.s-ink{stroke:var(--sk-1)}.s-soft{stroke:var(--sk-2)}.s-line{stroke:var(--sk-line)}
+.f-hatch{fill:url(#pHatch)}.f-gfi{fill:url(#gFireIce)}.f-gch{fill:url(#gColdHot)}
+.arw{stroke-width:2.4;stroke-linecap:round;fill:none}
+.tagline{font-size:12.4px;color:var(--txt);background:var(--panel2);border-left:3px solid var(--acc);border-radius:0 9px 9px 0;padding:6px 11px}
+.blk h4{margin:0 0 2px;font-size:11.5px;color:var(--txt2);letter-spacing:.07em;font-weight:700}
+.blk p{margin:0;font-size:12.8px}
+.blk ul{margin:0;padding-left:17px;font-size:12.8px}
+.blk li{margin:2px 0}
+.blk.syn{border-left:3px solid var(--ok);padding-left:11px}
+.blk.cn{border-left:3px solid var(--warn);padding-left:11px}
+.rel{margin-top:auto;padding-top:6px;border-top:1px dashed var(--line);display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--txt2)}
+.relchip{border:1px solid var(--line2);background:var(--panel2);border-radius:8px;padding:1px 7px;font-size:11px;color:var(--txt2);cursor:pointer}
+.relchip:hover{color:var(--txt)}
+.group.hide,.card.scheme.hide{display:none}
+.flash{animation:flash 1.5s ease-out}
+@keyframes flash{0%{box-shadow:0 0 0 0 rgba(56,189,248,.75)}100%{box-shadow:0 0 0 20px rgba(56,189,248,0)}}
+/* ---------- table view ---------- */
+.tablewrap{overflow-x:auto}
+table.tv{border-collapse:collapse;width:100%;font-size:12.4px;min-width:820px}
+table.tv th,table.tv td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+table.tv thead th{font-size:11.5px;color:var(--txt2);background:var(--panel2);position:sticky;top:60px}
+table.tv tbody tr{cursor:pointer}
+table.tv tbody tr:hover td{background:var(--panel2)}
+table.tv tr.hide{display:none}
+table.tv td.idc{font-weight:800;width:52px}
+table.tv td.costc{width:56px}
+table.tv td.tagnc{color:var(--txt2)}
+/* ---------- priority ---------- */
+.prio{display:grid;gap:12px}
+.pitem{padding:15px 18px;display:grid;grid-template-columns:56px 1fr;gap:16px;align-items:start}
+.pnum{font-size:30px;font-weight:800;line-height:1;background:linear-gradient(180deg,var(--fire),var(--ice));-webkit-background-clip:text;background-clip:text;color:transparent}
+.pitem h4{margin:0 0 5px;font-size:15.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pitem .why{color:var(--txt2);font-size:12.8px;margin:0}
+@media(max-width:560px){.pitem{grid-template-columns:1fr}}
+.notdo{padding:15px 18px;font-size:12.8px;color:var(--txt2)}
+.notdo b{color:var(--txt)}
+.notdo .chips{margin-top:8px}
+.relbox{padding:15px 18px;display:grid;gap:9px;font-size:12.6px;color:var(--txt2)}
+.relrow{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.foot{color:var(--txt2);font-size:12px;text-align:center;margin:44px 0 26px}
+</style>
+</head>
+<body>
+<svg id="globaldefs" width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true"><defs>
+<marker id="mFire" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5.6" markerHeight="5.6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#ff7a45"/></marker>
+<marker id="mIce" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5.6" markerHeight="5.6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#38bdf8"/></marker>
+<marker id="mInk" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5.6" markerHeight="5.6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" class="f-soft"/></marker>
+<marker id="mOk" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5.6" markerHeight="5.6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#34d399"/></marker>
+<marker id="mWarn" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5.6" markerHeight="5.6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#fbbf24"/></marker>
+<marker id="mBad" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="5.6" markerHeight="5.6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#f87171"/></marker>
+<linearGradient id="gFireIce" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff7a45"/><stop offset="1" stop-color="#38bdf8"/></linearGradient>
+<linearGradient id="gColdHot" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#38bdf8"/><stop offset=".48" stop-color="#a78bfa"/><stop offset="1" stop-color="#ff7a45"/></linearGradient>
+<pattern id="pHatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" class="s-soft" stroke-width="2"/></pattern>
+</defs></svg>
+<header class="topbar">
+  <div class="wrap tb">
+    <div class="brand"><span class="logo">❄</span>
+      <div><strong>《熔霜》玩法方案库</strong><span class="bsub">可视化导读 · 30 个方案 · 6 个分类 · 8 种形式</span></div>
+    </div>
+    <nav class="tnav">
+      <a href="#matrix">形式矩阵</a>
+      <a href="#cards">方案卡片</a>
+      <a href="#priority">优先验证</a>
+      <button id="viewBtn" class="ghost">表格视图</button>
+      <button id="themeBtn" class="ghost">☀️ 浅色</button>
+    </nav>
+  </div>
+</header>
+<main class="wrap">
+  <section class="hero">
+    <div class="card hero-main">
+      <h1>30 个玩法方向，先看清它们的「形式」</h1>
+      <p class="lead">用途：为《熔霜》储备玩法方向。当前工程已有联机骨架、角色移动与远端平滑，<b>元素系统尚未实现</b>，因此每个方案都标注了相对当前工程的增量成本。</p>
+      <div class="statusrow">
+        <span class="pill ok">✓ 联机骨架</span><span class="pill ok">✓ 角色移动</span><span class="pill ok">✓ 远端平滑</span><span class="pill no">✗ 元素系统（未实现）</span>
+      </div>
+      <p class="hint">读法：每张卡片顶部的小图是该方案的<b>结构示意</b>（不是最终画面），下面「形式」一行说明它在工程上是什么、要动哪一层数据；再往下是原文的概念 / 核心机制 / 结合点 / 增量成本。</p>
+      <div class="stats" id="stats"></div>
+    </div>
+    <div class="card hero-side">
+      <h3 class="side-h">成本分档</h3>
+      <ul class="costlegend" id="costlegend"></ul>
+      <h3 class="side-h">形式分布</h3>
+      <div class="formdist" id="formdist"></div>
+    </div>
+  </section>
+  <section id="matrix">
+    <h2 class="sec">形式矩阵 · 分类 × 形式</h2>
+    <p class="sub">行是文档里的六个分类，列是这些方案在工程上的形式。点格子筛出组合，点编号直接跳到对应卡片。</p>
+    <div class="card mxwrap" id="matrixBox"></div>
+  </section>
+  <section id="cards">
+    <h2 class="sec">方案卡片</h2>
+    <p class="sub">筛掉不需要的方向，只留下能在当前工程上先验证的部分。</p>
+    <div class="filters card" id="filters"></div>
+    <div id="cardArea"></div>
+  </section>
+  <section id="priority">
+    <h2 class="sec">优先验证建议</h2>
+    <p class="sub">按「能在当前工程上最快得到可玩结果」排序（原文顺序）。</p>
+    <div class="prio" id="prioList"></div>
+    <div class="card notdo" id="notdo"></div>
+    <h2 class="sec2">复用关系</h2>
+    <div class="card relbox" id="relbox"></div>
+  </section>
+  <footer class="foot">来源：docs/玩法方案库.md · 本页为可视化导读：文字与原文一致，仅重排结构并附结构示意图</footer>
+</main>
+<script>
+/* ============================================================
+   《熔霜》玩法方案库 · 可视化
+   数据层：每条方案保留原文的概念 / 核心机制 / 结合点 / 增量成本，
+   并补充 form（形式）与 mode（示意图）两个可视化字段。
+   ============================================================ */
+
+const CATS = {
+  A:{n:'解谜机制的深化', c:'#38bdf8', i:'只增加一条规则，却让同一批关卡素材产生大量新解法。优先验证它们，因为成本最低、复用率最高。'},
+  B:{n:'物理与建造沙盒', c:'#ff7a45', i:'依托 Jolt 的刚体动力学。需要注意的是：推箱、堆叠与可旋转平台一旦引入，就必须改为服务端权威判定（设计文档 4.5）。'},
+  C:{n:'压力与竞速', c:'#f87171', i:'同一套系统换一种压力方向：从「维持」变成「逃离」，从「配合」变成「对齐」。'},
+  D:{n:'合作结构的实验', c:'#a78bfa', i:'价值在于改变「两人分别做什么」，而不是改变关卡内容。'},
+  E:{n:'剧情与叙事', c:'#34d399', i:'把两名角色本来相克的属性延伸到认知与表达层面，主题与机制一致。'},
+  F:{n:'长线世界与元结构', c:'#fbbf24', i:'改变的是「两局之间发生什么」，适合作为内容填充期的方向。'}
+};
+const FORMS = {
+  value:    {n:'共享数值',     s:'一条全局标量',       c:'#fbbf24', i:'两人共同影响同一条全局数值，配合发生在资源与调节层面。'},
+  terrain:  {n:'地形/状态层',  s:'被写改的地表',       c:'#ff7a45', i:'移动或施放会写入状态、改写地形，关卡设计从「摆放机关」变成「摆放条件」。'},
+  time:     {n:'时间轴',       s:'节奏与回放',         c:'#38bdf8', i:'时间缩放、延迟重现、并行进度、状态交接——协调的对象是时钟。'},
+  asym:     {n:'信息差',       s:'两人看到的不同',     c:'#a78bfa', i:'把信息差直接做成机制：沟通本身成为主要操作。'},
+  physics:  {n:'物理沙盒',     s:'刚体与约束',         c:'#ff7a45', i:'引入刚体、约束或流体，判定必须改为服务端权威（设计文档 4.5）。'},
+  control:  {n:'控制结构',     s:'权限与归属',         c:'#f0abfc', i:'改变的不是关卡，而是「谁在操作什么」。'},
+  narrative:{n:'叙事层',       s:'文本与选择',         c:'#34d399', i:'用文本、选择或环境表达关系变化，机制与叙事同一套。'},
+  meta:     {n:'持久与元结构', s:'跨局留存',           c:'#94a3b8', i:'需要持久化存储或持续运行的系统，作用于「两局之间」。'}
+};
+const FORM_ORDER = ['value','terrain','time','asym','physics','control','narrative','meta'];
+const COST_ORDER = ['低','中','高'];
+const COST_DESC = {
+  '低':'在单个关卡内即可验证',
+  '中':'需要新增一类系统',
+  '高':'需要新增持续运行的子系统，或改动工程结构'
+};
+
+const DATA = [
+/* ---------------------------- A ---------------------------- */
+{id:'A1',cat:'A',name:'元素沉淀',cost:'中',form:'terrain',mode:'residue',
+ tag:'形式：一层会自行失效的地表状态，移动即写入。',
+ concept:'两名角色移动时会在地面留下元素残留——熔留下熔渣，霜留下霜痕，残留本身改变地表属性。',
+ mech:['熔渣遇水固化，成为可以站立的平台；霜痕遇火化为水，成为可以导电或托起物体的液体。',
+       '残留有存活时间，因此「先做哪一步」与「两步之间隔多久」都成为解谜变量。',
+       '两人可以刻意在对方的路径上留下残留，用来构造只在一次尝试之内成立的通道。'],
+ synergy:'移动本身成为改写地形的手段，而两人能写出什么完全由各自的元素属性决定，因此协作不是分工而是互补。关卡设计也从「摆放机关」变为「摆放条件」。',
+ costNote:'需要一层地表状态与残留的生命周期管理，并把它纳入服务端权威判定。',
+ rel:['B4','D4','E3']},
+{id:'A2',cat:'A',name:'共用元素池',cost:'低',form:'value',mode:'pool',
+ tag:'形式：一条两人共用的数值，分配即配合。',
+ concept:'两人共享一条元素能量总量，任何一方的使用都会削减另一方的可用量。',
+ mech:['总量固定，只能由关卡内的能量回复点补足，因此每次施放都是一次分配。',
+       '界面同时显示这条总量与两人各自的历史用量，于是责任归属变得可见。'],
+ synergy:'把「配合」从动作层面提到资源层面——两人不需要同时操作，但必须协商谁在什么时候花多少。争吵本身就是玩法的一部分。',
+ costNote:'一条共享变量加一次分配界面。',
+ rel:['C4','F4']},
+{id:'A3',cat:'A',name:'镜像双生',cost:'中',form:'asym',mode:'mirror',
+ tag:'形式：一份逻辑空间 + 两套渲染，输入坐标互为镜像。',
+ concept:'同一关卡在两人机器上呈现两份镜像版本，机关只在其中一侧生效。',
+ mech:['一侧的开关改变另一侧的地形，两侧的坐标映射经过镜像变换。',
+       '两人的手性相反，因此「向左」在两边指向不同的空间方向。',
+       '通信变成主要操作：双方必须描述自己看到的空间关系，而描述天然容易出错。'],
+ synergy:'把信息差直接做成机制，不需要额外的叙事包装就能产生大量误会与笑料。',
+ costNote:'服务端保存一份逻辑空间，客户端按各自的手性渲染，并映射各自的输入。',
+ rel:['D3']},
+{id:'A4',cat:'A',name:'时间错位',cost:'中',form:'time',mode:'offset',
+ tag:'形式：同一关卡两套时间缩放，服务端保持单一权威时基。',
+ concept:'两人的关卡时间流速不同，一方为 0.5 倍，另一方为 1.0 倍。',
+ mech:['慢速方的操作窗口更长，然而同一扇门在快速方看来只开启一半时长。',
+       '两人只能靠画面上的节拍提示预先约定动作时刻。',
+       '慢速方的角色在快速方眼中动作迟滞，快速方的角色在慢速方眼中快得难以跟随。'],
+ synergy:'适合做成单关的实验，不适合作为全局规则。它能检验两人在不平等条件下的协调能力。',
+ costNote:'物理与表现需要各自的时间缩放，而服务端的权威判定必须统一时基，这里最容易出问题。',
+ rel:['C1']},
+{id:'A5',cat:'A',name:'记录与重现',cost:'中',form:'time',mode:'ghost',
+ tag:'形式：一段可回放的动作轨迹，充当不受控的第二名玩家。',
+ concept:'其中一方的角色会按固定延迟重现自己做过的动作，另一人必须与这个「过去的自己」配合。',
+ mech:['延迟量作为关卡参数可调，3 秒与 10 秒要求的思路完全不同。',
+       '重现体可以被推动，也可以触发机关，但不接受操作。',
+       '需要「现在做一步、为将来的重现体铺路」这种跨时间的规划。'],
+ synergy:'单人的一次操作被展开成双人协作，因此它同时解决了「找不到第二个人」的痛点——重现体可以替代队友。',
+ costNote:'需要动作录制与回放，以及重现体在服务端的确定性生成。',
+ rel:['D2']},
+{id:'A6',cat:'A',name:'温度标尺',cost:'低',form:'value',mode:'gauge',
+ tag:'形式：一条全局标量 + 一组区间判定（安全区与开门区错开）。',
+ concept:'每个房间有一条全局温度值，熔的每次施放提升它，霜的每次施放降低它，机关按温度区间开启。',
+ mech:['温度同时是资源与威胁：过高或过低都会让双方受损，因此目标从「达成」改为「维持」。',
+       '需要开门的区间可能与安全区间不一致，于是两人必须先抬升再压低。'],
+ synergy:'节奏由此从爆发转为调节，两名玩家的施放变成一对相反的作用力，天然构成持续的配合。',
+ costNote:'一条随元素施放变化的全局数值加一组区间判定。',
+ rel:['C2','F3']},
+/* ---------------------------- B ---------------------------- */
+{id:'B1',cat:'B',name:'熔铸工坊',cost:'高',form:'physics',mode:'build',
+ tag:'形式：零件 + 连接点 + 强度上限的建造系统。',
+ concept:'房间是一座封闭车间，目标是造出一台能运转的机器（水车、升降台、起重机），两人负责不同工序。',
+ mech:['零件有各自的物理属性，熔负责塑形与焊接，霜负责冷却与固定，缺任何一方都只能得到半成品。',
+       '焊接点有强度上限，超出后断裂，因此「造得多」不一定通过。'],
+ synergy:'把双人解谜的产物从「打开一扇门」升级为「留下一台机器」，成就感更强，也便于做成多人共享的成果。',
+ costNote:'需要可连接的零件系统与结构强度计算。',
+ rel:['E5']},
+{id:'B2',cat:'B',name:'热力浮沉',cost:'中',form:'physics',mode:'buoy',
+ tag:'形式：一条被双方连续输入推动的浮力/高度状态。',
+ concept:'用熔加热气囊产生升力，用霜冷却制造下沉，两人共乘一个平台在垂直空间内穿行。',
+ mech:['双方站位影响重心与载荷，任何一方的施放都会让平台整体升降。',
+       '上升需要持续供热，因此动力与精度互相制约。'],
+ synergy:'垂直空间是 3D 化最直接的收益，而共乘平台让两人无法各自为战。',
+ costNote:'浮力模型与平台物理。',
+ rel:['B5']},
+{id:'B3',cat:'B',name:'三态水利',cost:'中',form:'physics',mode:'water',
+ tag:'形式：一个闭合的物质循环，两侧各管一半的相变。',
+ concept:'以水的固、液、气三态转换构造通路。',
+ mech:['霜把水面冻结为桥，熔把它蒸发为蒸汽推动风车，蒸汽遇冷凝结为雨回到原处，形成可循环的机关。',
+       '循环本身可以设计成谜题：一次转换产生的后果会在一段时间后返回原点。'],
+ synergy:'两种元素的属性互相定义，任何一方单独行动都无法完成循环。',
+ costNote:'三态转换与流体表面的简化模拟。',
+ rel:['A1']},
+{id:'B4',cat:'B',name:'自由凿掘',cost:'高',form:'terrain',mode:'carve',
+ tag:'形式：可永久改写的地形数据 + 高效结构改动同步。',
+ concept:'地形是软质的（沙、泥、岩），两人按各自的元素能力改变材质，自行开辟路线。',
+ mech:['关卡只给出起点与终点，没有唯一解；材质在元素作用下改变硬度与浮力。',
+       '两人的开凿痕迹会永久改变后续路线的可能性，因此一次草率的操作可能关闭其他解法。'],
+ synergy:'把「标准答案式解谜」换成「共同创造路径」，自由度与重玩性显著提高。',
+ costNote:'需要可变地形、高效的结构改动同步，以及服务端的确定性模拟。',
+ rel:['A1']},
+{id:'B5',cat:'B',name:'天平与配重',cost:'中',form:'physics',mode:'balance',
+ tag:'形式：约束/关节系统，判定取自两侧输入的净值。',
+ concept:'以杠杆、滑轮与配重为核心，两人在空间的不同高度同时施力。',
+ mech:['熔可以熔化配重块、霜可以让绳索变脆，于是两人可以主动改变平衡条件，而不是只能增加重量。',
+       '机关需要维持在一个区间内一段时间，因此两人必须持续协商各自的位置。'],
+ synergy:'物理直觉是这一类的门槛，也是它的乐趣来源；两名玩家各控制一侧，判定天然由双方共同产生。',
+ costNote:'约束系统与关节的稳定性调优。',
+ rel:['B2','C4']},
+/* ---------------------------- C ---------------------------- */
+{id:'C1',cat:'C',name:'双线并行',cost:'中',form:'time',mode:'lanes',
+ tag:'形式：两条并行进度，门由「两条都到位」打开。',
+ concept:'两条并行的关卡各由一人推进，通路只在双方同时位于指定位置时出现。',
+ mech:['双方的进度互相可见（对方的关卡显示在墙上的窗口里），因此可以通报剩余距离。',
+       '两侧的解谜难度不对称，且中途可以交换位置以缓和压力。'],
+ synergy:'把协作从「同时在场」变为「同时到位」，考验的是节奏对齐而不是动作互补。',
+ costNote:'需要两个并行关卡的加载与状态同步。',
+ rel:['A4','D4']},
+{id:'C2',cat:'C',name:'升温竞时',cost:'低',form:'value',mode:'rise',
+ tag:'形式：A6 的标量 + 一条单向增长曲线。',
+ concept:'房间自开局起持续升温，两人必须在无法生存之前离开。',
+ mech:['霜可以局部降温以换取时间，然而降温需要熔提供能量，这个交换本身就是资源权衡。',
+       '温度越接近上限，画面与音效的压迫感越强，而两人的决策时间越短。'],
+ synergy:'把 A6 的温度标尺改成单向的，从「维持」变成「逃离」，同一套系统可以出两种关卡。',
+ costNote:'在 A6 之上加一条单向增长曲线。',
+ rel:['A6']},
+{id:'C3',cat:'C',name:'逼近的边界',cost:'中',form:'terrain',mode:'shrink',
+ tag:'形式：持续缩小的可用区域 + 救援耗时。',
+ concept:'一股无法战胜的元素潮汐持续缩减房间的可用空间。',
+ mech:['救援队友需要花费时间，因此「是否回头」成为每局的核心决策。',
+       '潮汐的推进速度随房间剩余空间变化，避免前期过于宽松或后期无法挽回。'],
+ synergy:'给解谜加入直接的代价，两人必须共同承担回头救援的风险。',
+ costNote:'需要持续的区域判定与救援交互。',
+ rel:['C1']},
+{id:'C4',cat:'C',name:'双人对峙机关',cost:'低',form:'value',mode:'tug',
+ tag:'形式：一条差值驱动的机构，两侧输入 + 能量上限。',
+ concept:'某些机关需要两人从相反方向持续施力，力量差值决定机构的位置。',
+ mech:['双方都能看到彼此的力量条，因此这实际上是一场实时协商。',
+       '施力会消耗元素能量（见 A2），于是对峙存在时长上限。'],
+ synergy:'把「同时按下两个按钮」升级为需要动态调整的对抗性协作，趣味来自力量的来回。',
+ costNote:'一条差值驱动的机构动画加两条输入。',
+ rel:['A2','B5']},
+/* ---------------------------- D ---------------------------- */
+{id:'D1',cat:'D',name:'角色互换',cost:'低',form:'control',mode:'swap',
+ tag:'形式：交换输入归属，权限需要重新处理。',
+ concept:'双方可以在任意时刻互换操作的角色。',
+ mech:['互换后两人的空间处境完全改变，因为角色属性决定了各自能通过的地形。',
+       '互换有冷却，所以时机选择本身是操作。'],
+ synergy:'让玩家短暂地体验对方的视角，理解成本低，趣味与混乱都很直接。',
+ costNote:'交换输入归属，权限设置需要重新处理。',
+ rel:['D4']},
+{id:'D2',cat:'D',name:'一人是关卡',cost:'中',form:'control',mode:'console',
+ tag:'形式：非对称权限——一人操角色，一人操房间。',
+ concept:'其中一名玩家不操作角色，而是控制房间内的机关与地形，另一人操作角色。',
+ mech:['双方的胜负条件绑定，角色失败则本局对两人同时结束，因此控制方没有动机刻意破坏。',
+       '每关结束后两人轮换，避免长期不平衡。'],
+ synergy:'非对称合作在双人游戏里的接受度已经过验证，而元素题材正好给控制方提供了一套有主题的工具。',
+ costNote:'需要一套面向控制方的操作界面。',
+ rel:['A5','D1']},
+{id:'D3',cat:'D',name:'观测者',cost:'低',form:'asym',mode:'observer',
+ tag:'形式：两块互补面板，只能靠语言补齐信息。',
+ concept:'其中一方能看到全局地图与机关状态，却看不到自己的角色；另一方只看得到自己的视角。',
+ mech:['两块面板互补，因此必须依靠语言传递信息。',
+       '可以定期互换角色，让双方都体验过两种信息处境。'],
+ synergy:'与 A3 的镜像双生方向相反：那里是被误导，这里是被限制，两者可以放进同一关的不同阶段。',
+ costNote:'两套不同的本地界面。',
+ rel:['A3','E1']},
+{id:'D4',cat:'D',name:'分段交接',cost:'低',form:'time',mode:'handoff',
+ tag:'形式：分段关卡 + 状态延续，交接点可要求会合。',
+ concept:'关卡分为若干段，每段由一人独立完成，而状态会延续给下一段。',
+ mech:['交接时另一人接手，前一人的选择（留下的残留、开着的门、用掉的能量）成为接手者的初始条件。',
+       '交接可以设计成必须见面完成，因此两人要有一次物理上的会合。'],
+ synergy:'制造「接手别人半成品」的体验，这对长期配合的两人来说很有趣，对陌生组合则是磨合。',
+ costNote:'主要是关卡切分与状态保持。',
+ rel:['A1','D1']},
+{id:'D5',cat:'D',name:'受限通讯',cost:'低',form:'asym',mode:'comms',
+ tag:'形式：区域性的信息屏蔽，把交流变成事先约定。',
+ concept:'在关卡的部分区域内，双方无法看到对方的画面，只能依靠事先约定的暗号。',
+ mech:['干扰区有可见的边界，进入前两人可以商定信号。',
+       '干扰区内的机关需要精确时序，因此事先约定必须足够明确。'],
+ synergy:'把语音交流变成需要在游戏外预先准备的资源，这是双人解谜里少见的维度。',
+ costNote:'区域判定加画面遮罩。',
+ rel:['A3','D3']},
+/* ---------------------------- E ---------------------------- */
+{id:'E1',cat:'E',name:'双视角真相',cost:'中',form:'asym',mode:'truth',
+ tag:'形式：双份文本与地形变体 + 分歧收敛判定。',
+ concept:'同一事件在两人那里呈现不同版本，只有交流才能拼出全貌。',
+ mech:['同一段对白在两台机器上文本不同，同一片地形在两人眼中结构不同。',
+       '分歧点可以做成必须由双方共同确认才能推进的开关。'],
+ synergy:'两名角色本就属性相克，把这种对立延伸到认知层面，主题与机制一致。',
+ costNote:'需要双份的文本与地形变体，以及分歧的收敛判定。',
+ rel:['D3','E2']},
+{id:'E2',cat:'E',name:'独立选择',cost:'中',form:'narrative',mode:'choice',
+ tag:'形式：两个不可见的私下选择，组合决定下一章。',
+ concept:'每章结尾两人各自做一次选择，在做出决定之前看不到对方的选择。',
+ mech:['两个选择的组合决定下一章的形态（谁承担代价、哪条路开启）。',
+       '选择结果不广播，只在下一章的开场里以环境变化体现。'],
+ synergy:'把信任做成可量化的机制，而且成本很低，适合作为叙事层的最小实现。',
+ costNote:'选项存储与分支关卡的组合。',
+ rel:['E1','F4']},
+{id:'E3',cat:'E',name:'记忆重构',cost:'中',form:'meta',mode:'memory',
+ tag:'形式：跨局记录失败样本，隐式生成更容易的变体。',
+ concept:'关卡结构与玩家此前的失误相关，失败过的地方在下次进入时形态改变。',
+ mech:['系统记录失败位置与失败原因，下次进入时把那处地形换成更容易通过的版本，或加入提示性的元素残留。',
+       '难度因此是隐式自适应的，不需要玩家手动选择。'],
+ synergy:'双人组合的失败模式与单人不同，因此这套记录天然需要区分「谁在哪一步失败」。',
+ costNote:'失败采样与关卡变体生成。',
+ rel:['A1']},
+{id:'E4',cat:'E',name:'无声叙事',cost:'中',form:'narrative',mode:'silent',
+ tag:'形式：无文本，机关与空间结构承担叙事。',
+ concept:'不设对白，靠机关与环境讲述两个元素生命体的故事。',
+ mech:['从融化与凝固、寒冷与温暖这些动作本身表达关系变化。',
+       '关卡的空间结构承担叙事，例如同一片区域在不同章节里被改写。'],
+ synergy:'机制即叙事，不需要额外的文本量，适合美术能力有限但关卡能力强的团队。',
+ costNote:'成本主要在美术与关卡编排，而不是系统。',
+ rel:['E1']},
+{id:'E5',cat:'E',name:'前人的痕迹',cost:'高',form:'meta',mode:'traces',
+ tag:'形式：服务端持久化的异步遗留物 + 内容治理。',
+ concept:'关卡里保留其他玩家组合的遗留物，例如留言、半成品机关、失败位置的标记。',
+ mech:['两人可以看到其他人如何尝试同一处机关，并留下自己的解法。',
+       '痕迹需要审核与过滤，否则会迅速被垃圾信息占满。'],
+ synergy:'异步多人能显著延长内容寿命，然而它依赖服务端持久存储与内容治理。',
+ costNote:'服务端存储、同步与审核链路。',
+ rel:['B1','F1']},
+/* ---------------------------- F ---------------------------- */
+{id:'F1',cat:'F',name:'元素据点',cost:'高',form:'meta',mode:'camp',
+ tag:'形式：共享持久存档 + 据点编辑，增益回流到关卡。',
+ concept:'两人共有一座持续发展的据点，关卡产出的材料用于扩张它。',
+ mech:['据点提供功能性的增益（工作台、传送点、试验场），因此扩张会直接改变后续关卡的玩法。',
+       '据点内两人可以各自布置一块区域，风格差异可见。'],
+ synergy:'给纯解谜提供长线目标，也是把「双人共享进度」具象化的最低成本方式。',
+ costNote:'持久存档与据点的编辑系统。',
+ rel:['E5','F3']},
+{id:'F2',cat:'F',name:'生态演化',cost:'高',form:'meta',mode:'eco',
+ tag:'形式：持续运行的生态模拟，结果不可完全预测。',
+ concept:'引入自行繁衍的元素生物，两人的行为影响其数量与分布，而不直接决定关卡成败。',
+ mech:['生物按自身规则活动，玩家的干预改变环境条件，因此结果不可完全预测。',
+       '部分关卡的解法依赖生物的行为，于是需要观察与等待。'],
+ synergy:'不可完全预测的第三方能制造大量意外，这恰好缓解两人配合久了之后套路化的问题。',
+ costNote:'需要一套可持续运行的生态模拟与性能控制。',
+ rel:['F3']},
+{id:'F3',cat:'F',name:'极寒营地生存',cost:'高',form:'meta',mode:'survival',
+ tag:'形式：资源 / 温度 / 昼夜 / 建筑 四套系统叠加。',
+ concept:'一张持续降温的地图，两人需要维持营地温度、外出采集、轮流值守。',
+ mech:['营地与野外形成两种任务，两人必须分头行动又互相依赖。',
+       '元素能力同时用于取暖、开路与加工，因此资源分配与探索路线绑在一起。'],
+ synergy:'生存框架本身就鼓励分工，而元素属性让分工有明确的分界。',
+ costNote:'资源、温度、昼夜与建筑四套系统。',
+ rel:['A6','F1','F2']},
+{id:'F4',cat:'F',name:'随机房间拼装',cost:'高',form:'meta',mode:'rooms',
+ tag:'形式：房间池 + 接口规则 + 可通行性校验。',
+ concept:'每局从房间池中拼装出一段关卡，两人共享一份元素升级，失败则重置。',
+ mech:['房间之间有接口规则，因此拼接结果必须保证可通行。',
+       '升级在两人之间分配，与 A2 的共用元素池可以合为一套。'],
+ synergy:'用组合数量替换关卡制作量，是内容不足时最直接的延长手段。',
+ costNote:'需要房间池、拼接规则与可通行性校验。',
+ rel:['A2','E2']},
+{id:'F5',cat:'F',name:'互设谜题',cost:'高',form:'meta',mode:'editor',
+ tag:'形式：关卡编辑器 + 谜题分享与评分回路。',
+ concept:'两人轮流为对方设计一个小谜题，对方的解法评分反过来决定自己下一关的难度。',
+ mech:['编辑器只暴露当前关卡已有的机关，因此设计成本有限。',
+       '评分依据包括用时、尝试次数与是否使用了设计者预期的思路。'],
+ synergy:'把「两个人一起解谜」变成「两个人互相出题」，是熟人组合的长期内容来源。',
+ costNote:'关卡编辑器与谜题分享链路。',
+ rel:['F4']}
+];
+
+/* ---------- 优先验证建议（原文表格） ---------- */
+const PRIORITY = [
+  {id:'A6',why:'一条全局数值即可验证，且 C2 可以直接复用。'},
+  {id:'A1',why:'把移动变成手段，对关卡设计的杠杆最大。'},
+  {id:'A2',why:'成本极低，然而它会改变所有后续关卡的设计口径，因此应当早定。'},
+  {id:'A3',why:'最能体现「3D + 联机」的独特性，也是最能形成记忆点的一条。'},
+  {id:'C4',why:'单关内即可验证，适合与上面几项组合成第一关。'}
+];
+const NOTDO = ['B1','B4','E5','F1','F2','F3','F4','F5'];
+const NOTDO_WHY = '它们都需要额外的持久系统，而当前瓶颈是元素手感与关卡结构，不是内容量。';
+const RELNOTES = [
+  ['A6','C2','温度标尺换成单向增长曲线，同一套系统出两种关卡。'],
+  ['A2','C4','对峙施力消耗元素能量，于是对峙存在时长上限。'],
+  ['A2','F4','共享一份元素升级与共用元素池可以合为一套。'],
+  ['A3','D3','一个是被误导，一个是被限制，可放进同一关的不同阶段。'],
+  ['A1','D4','前一人的残留成为接手者的初始条件。'],
+  ['A1','B4','同属「地表可被改写」，A1 是薄层、B4 是整块地形。']
+];
+</script>
+<style>
+.f-none{fill:none}
+.pas{fill:none;stroke:var(--sk-bg)}
+</style>
+<script>
+/* ============================================================
+   结构示意图：八种「形式」各有自己的画法
+   viewBox 0 0 320 140
+   ============================================================ */
+const vb='0 0 320 140';
+const svg=inner=>`<svg class="sch" viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${inner}</svg>`;
+const rc=(x,y,w,h,r,cls,extra='')=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" class="${cls}" ${extra}/>`;
+const ln=(x1,y1,x2,y2,cls,extra='')=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="${cls}" ${extra}/>`;
+const ci=(cx,cy,r,cls,extra='')=>`<circle cx="${cx}" cy="${cy}" r="${r}" class="${cls}" ${extra}/>`;
+const tx=(x,y,s,cls='sk-t',a='middle')=>`<text x="${x}" y="${y}" class="${cls}" text-anchor="${a}">${s}</text>`;
+const pa=(d,cls,extra='')=>`<path d="${d}" class="${cls}" ${extra}/>`;
+const arw=(x1,y1,x2,y2,mk,cls='s-ink',extra='')=>`<path d="M${x1} ${y1}L${x2} ${y2}" class="arw ${cls}" ${extra} marker-end="url(#${mk})"/>`;
+const ticks=(y,step,n)=>Array.from({length:n},(_,i)=>ln(24+i*step,y-4,24+i*step,y+4,'s-line','stroke-width="1" opacity=".8"')).join('');
+
+const VIZ = {};
+
+/* ---------------- 共享数值 ---------------- */
+VIZ.value = d => {
+  const m = d.mode;
+  if(m==='pool') return svg(`
+    ${arw(30,28,66,50,'mFire','s-fire')}${tx(42,18,'熔 施放','sk-t2')}
+    ${arw(290,28,254,50,'mIce','s-ice')}${tx(280,18,'霜 施放','sk-t2')}
+    ${tx(160,40,'剩余 45%','sk-t3')}
+    ${rc(38,48,244,26,13,'f-panel s-line','stroke-width="1.2"')}
+    ${rc(40,50,110,22,11,'f-gfi')}
+    ${rc(152,50,128,22,11,'f-hatch','opacity=".85"')}
+    ${ln(150,44,150,78,'s-ink','stroke-width="1.6" stroke-dasharray="4 3"')}
+    ${arw(66,120,66,80,'mOk','s-ok')}${tx(66,134,'能量回复点','sk-t3')}
+    ${tx(214,92,'共享总量：一条，不能分成两半','sk-t3')}
+    ${tx(160,118,'每次施放都是一次分配','sk-t3')}`);
+  if(m==='gauge') return svg(`
+    ${tx(72,18,'熔 施放 → 升温','sk-t2')}${tx(248,18,'霜 施放 → 降温','sk-t2')}
+    ${arw(64,24,108,38,'mFire','s-fire')}${arw(256,24,212,38,'mIce','s-ice')}
+    ${rc(30,44,260,22,11,'f-panel s-line','stroke-width="1.2"')}
+    ${rc(31,45,258,20,10,'f-gch')}
+    ${ln(160,42,160,68,'s-ink','stroke-width="1.8"')}
+    ${tx(160,60,'当前值','sk-t3')}
+    ${rc(30+260*.36,80,260*.28,8,4,'f-ok','opacity=".85"')}
+    ${tx(30+260*.5,76,'安全区','sk-t3')}
+    ${rc(30+260*.05,98,260*.23,8,4,'f-warn','opacity=".9"')}
+    ${tx(30+260*.165,94,'需要开门的区间','sk-t3')}
+    ${tx(160,126,'两个区间错开 → 目标从「达成」改为「维持」','sk-t3')}`);
+  if(m==='rise') return svg(`
+    ${tx(46,20,'房间自开局起持续升温','sk-t3','start')}
+    ${ln(44,110,300,110,'s-line','stroke-width="1.2"')}
+    ${pa('M300 110 l-9 4 v-8 z','f-soft')}
+    ${ln(44,110,44,26,'s-line','stroke-width="1.2"')}
+    ${ln(44,44,300,44,'s-bad','stroke-width="1.6" stroke-dasharray="6 4"')}
+    ${tx(298,38,'生存上限','sk-t3','end')}
+    ${pa('M44 106 C120 100 200 80 244 48','s-fire','fill="none" stroke-width="2.6"')}
+    ${pa('M244 48 C256 54 264 40 276 32','s-ice','fill="none" stroke-width="2.4" stroke-dasharray="5 4"')}
+    ${ci(244,48,3.6,'f-bad')}
+    ${tx(298,100,'霜降温 = 买时间（花熔的能量）','sk-t3','end')}
+    ${tx(170,130,'时间（单局）','sk-t3')}`);
+  if(m==='tug') return svg(`
+    ${tx(60,20,'熔 施力','sk-t2')}${tx(260,20,'霜 施力','sk-t2')}
+    ${arw(30,30,112,46,'mFire','s-fire')}${arw(290,30,208,46,'mIce','s-ice')}
+    ${rc(24,52,272,14,7,'f-panel s-line','stroke-width="1.2"')}
+    ${rc(152,40,32,38,9,'f-gfi')}
+    ${tx(168,34,'机构','sk-t3')}
+    ${rc(24,86,132,10,5,'f-panel')}${rc(24,86,86,10,5,'f-fire')}
+    ${rc(164,86,132,10,5,'f-panel')}${rc(223,86,59,10,5,'f-ice')}
+    ${tx(90,110,'熔 力量 65%','sk-t3')}${tx(230,110,'霜 力量 45%','sk-t3')}
+    ${tx(160,132,'力量差值决定机构位置 · 施力消耗能量 → 对峙有时限','sk-t3')}`);
+  return svg('');
+};
+
+/* ---------------- 地形 / 状态层 ---------------- */
+VIZ.terrain = d => {
+  const m = d.mode;
+  if(m==='residue') return svg(`
+    ${tx(160,16,'移动即写入地表，残留会自行消失','sk-t2')}
+    ${ci(42,50,9,'f-none s-soft','stroke-width="1.4"')}
+    ${ln(42,50,42,44,'s-soft','stroke-width="1.4"')}${ln(42,50,47,53,'s-soft','stroke-width="1.1"')}
+    ${tx(60,54,'存活时间 →「先做哪一步」与「隔多久」都成为解谜变量','sk-t3','start')}
+    ${rc(0,92,320,48,0,'f-ground')}
+    ${ln(0,92,320,92,'s-line','stroke-width="1.2"')}
+    ${pa('M8 108 C60 108 74 108 122 108','s-fire','stroke-width="9" stroke-linecap="round" opacity=".45"')}
+    ${pa('M198 108 C246 108 258 108 312 108','s-ice','stroke-width="9" stroke-linecap="round" opacity=".45"')}
+    ${tx(58,100,'熔渣','sk-t3')}${tx(258,100,'霜痕','sk-t3')}
+    ${rc(136,78,48,14,3,'f-fire','opacity=".9"')}
+    ${tx(160,72,'熔渣遇水 → 固化平台','sk-t3')}
+    ${rc(120,118,56,6,3,'f-ice','opacity=".6"')}
+    ${tx(186,126,'霜痕遇火 → 水','sk-t3','start')}`);
+  if(m==='carve'){
+    let g='';
+    for(let x=20;x<320;x+=20) g+=ln(x,32,x,126,'s-line','stroke-width=".7" opacity=".5"');
+    for(let y=48;y<126;y+=16) g+=ln(0,y,320,y,'s-line','stroke-width=".7" opacity=".5"');
+    return svg(`
+      ${tx(160,20,'关卡只给起点与终点：没有唯一解','sk-t2')}
+      ${rc(0,32,320,94,0,'f-ground2')}${g}
+      ${pa('M-6 110 C60 110 74 62 150 62 C212 62 240 46 312 46','pas','stroke-width="19" stroke-linecap="round"')}
+      ${pa('M-6 124 C70 124 112 118 158 104 C218 86 258 100 326 96','pas','stroke-width="15" stroke-linecap="round"')}
+      ${pa('M-6 110 C60 110 74 62 150 62 C212 62 240 46 312 46','s-fire','fill="none" stroke-width="2" stroke-dasharray="6 5"')}
+      ${pa('M-6 124 C70 124 112 118 158 104 C218 86 258 100 326 96','s-ice','fill="none" stroke-width="2" stroke-dasharray="6 5"')}
+      ${ci(8,110,5,'f-fire')}
+      ${pa('M300 38 l8 8 -8 8 -8 -8 z','f-warn')}
+      ${tx(24,124,'起点','sk-t3','start')}${tx(292,34,'终点','sk-t3','end')}
+      ${tx(160,138,'材质在元素作用下改变硬度与浮力，开凿痕迹会永久改变后续路线','sk-t3')}`);
+  }
+  if(m==='shrink') return svg(`
+    ${tx(160,14,'元素潮汐持续吞掉可用空间','sk-t2')}
+    ${rc(18,20,284,96,10,'f-ground2')}
+    ${rc(18,20,44,96,10,'f-hatch')}
+    ${rc(258,20,44,96,10,'f-hatch')}
+    ${arw(68,68,98,68,'mBad','s-bad')}
+    ${arw(252,68,222,68,'mBad','s-bad')}
+    ${rc(106,36,108,64,8,'f-none s-ink','stroke-width="1.6" stroke-dasharray="7 5"')}
+    ${tx(160,32,'可用空间','sk-t3')}
+    ${ci(126,70,7,'f-fire')}${ci(194,70,7,'f-ice')}
+    ${pa('M134 84 C160 100 188 100 212 86','s-ok','fill="none" stroke-width="2" stroke-dasharray="5 4"')}
+    ${tx(160,110,'救援要花时间','sk-t3')}
+    ${tx(160,130,'推进速度随剩余空间变化 →「是否回头」是每局的核心决策','sk-t3')}`);
+  return svg('');
+};
+
+/* ---------------- 时间轴 ---------------- */
+VIZ.time = d => {
+  const m = d.mode;
+  if(m==='offset') return svg(`
+    ${tx(160,16,'同一扇门，两边看到的开启时长不同','sk-t2')}
+    ${tx(24,34,'玩家1 · 时间 ×1.0（快）','sk-t3','start')}
+    ${ln(24,48,300,48,'s-soft','stroke-width="1.4"')}${ticks(48,24,12)}
+    ${rc(120,40,26,16,3,'f-fire','opacity=".9"')}
+    ${tx(133,32,'门开启','sk-t3')}
+    ${tx(24,80,'玩家2 · 时间 ×0.5（慢）','sk-t3','start')}
+    ${ln(24,94,300,94,'s-soft','stroke-width="1.4"')}${ticks(94,48,6)}
+    ${rc(120,86,52,16,3,'f-ice','opacity=".9"')}
+    ${tx(196,110,'慢速方的操作窗口更长','sk-t3','start')}
+    ${tx(160,132,'只能靠画面上的节拍提示预先约定动作时刻','sk-t3')}`);
+  if(m==='ghost') return svg(`
+    ${tx(160,16,'延迟量是关卡参数：3 秒与 10 秒要求的思路完全不同','sk-t2')}
+    ${ln(24,58,300,58,'s-soft','stroke-width="1.2" stroke-dasharray="4 3" opacity=".85"')}
+    ${tx(24,46,'现在','sk-t3','start')}
+    ${ci(60,58,5,'f-fire')}${ci(100,58,5,'f-fire')}${ci(140,58,5,'f-fire')}
+    ${ln(24,104,300,104,'s-soft','stroke-width="1.2" stroke-dasharray="4 3" opacity=".85"')}
+    ${tx(24,92,'重现体（延迟 3 秒）','sk-t3','start')}
+    ${ci(152,104,5,'f-none s-ice','stroke-width="2" stroke-dasharray="3 2"')}
+    ${ci(192,104,5,'f-none s-ice','stroke-width="2" stroke-dasharray="3 2"')}
+    ${ci(232,104,5,'f-none s-ice','stroke-width="2" stroke-dasharray="3 2"')}
+    ${arw(140,64,152,98,'mIce','s-ice','stroke-dasharray="4 3"')}
+    ${tx(298,76,'需「现在做一步、为将来铺路」','sk-t3','end')}
+    ${tx(160,130,'重现体可以被推动、触发机关，但不接受操作','sk-t3')}`);
+  if(m==='lanes') return svg(`
+    ${tx(28,32,'玩家1 · 进度 72%（难）','sk-t3','start')}
+    ${rc(28,38,264,14,7,'f-panel')}${rc(28,38,190,14,7,'f-fire')}${ci(218,45,6,'f-fire')}
+    ${tx(28,76,'玩家2 · 进度 45%（易）','sk-t3','start')}
+    ${rc(28,82,264,14,7,'f-panel')}${rc(28,82,119,14,7,'f-ice')}${ci(147,89,6,'f-ice')}
+    ${rc(246,28,10,84,4,'f-ok','opacity=".18"')}
+    ${ln(251,28,251,112,'s-ok','stroke-width="1.6" stroke-dasharray="5 4"')}
+    ${tx(251,126,'通路','sk-t3')}
+    ${tx(120,126,'通路只在双方同时到位时出现','sk-t3')}
+    ${tx(160,140,'两侧难度不对称，中途可以交换位置以缓和压力','sk-t3')}`);
+  if(m==='handoff'){
+    const owners=['P1','P2','P1','P2'];
+    let blk='';
+    for(let i=0;i<4;i++){
+      const x=20+i*76;
+      blk+=rc(x,42,68,34,8,owners[i]==='P1'?'f-fire':'f-ice','opacity=".22"');
+      blk+=rc(x,42,68,34,8,'f-none s-line','stroke-width="1.1"');
+      blk+=tx(x+34,60,`段${i+1}`,'sk-t');
+      blk+=tx(x+34,72,owners[i]+' 独立完成','sk-t3');
+      if(i<3) blk+=arw(x+68,59,x+75,59,'mInk','s-ink');
+    }
+    return svg(`
+      ${tx(160,22,'前一人的选择成为接手者的初始条件','sk-t2')}
+      ${blk}
+      ${tx(160,96,'交接时延续的状态','sk-t3')}
+      ${rc(20,104,88,18,9,'f-panel s-line','stroke-width="1"')}${tx(64,117,'残留','sk-t3')}
+      ${rc(116,104,88,18,9,'f-panel s-line','stroke-width="1"')}${tx(160,117,'开着的门','sk-t3')}
+      ${rc(212,104,88,18,9,'f-panel s-line','stroke-width="1"')}${tx(256,117,'用掉的能量','sk-t3')}
+      ${tx(160,138,'交接可以设计成必须见面完成 → 两人要有一次物理上的会合','sk-t3')}`);
+  }
+  return svg('');
+};
+
+/* ---------------- 信息差 ---------------- */
+VIZ.asym = d => {
+  const m = d.mode;
+  if(m==='mirror') return svg(`
+    ${ln(160,10,160,124,'s-soft','stroke-width="1.4" stroke-dasharray="5 5"')}
+    ${rc(10,22,142,96,10,'f-ground2')}${rc(168,22,142,96,10,'f-ground2')}
+    ${tx(81,16,'玩家1','sk-t3')}${tx(239,16,'玩家2','sk-t3')}
+    ${rc(126,66,8,22,4,'f-soft')}${ln(108,66,132,66,'s-ink','stroke-width="3"')}
+    ${arw(50,86,100,86,'mFire','s-fire')}${tx(76,102,'玩家1 按「向左」','sk-t3')}
+    ${rc(186,66,8,22,4,'f-soft')}${ln(188,66,212,66,'s-ink','stroke-width="3"')}
+    ${arw(270,86,220,86,'mIce','s-ice')}${tx(244,102,'玩家2 也按「向左」','sk-t3')}
+    ${rc(20,110,122,6,3,'f-fire','opacity=".4"')}${rc(178,110,122,6,3,'f-ice','opacity=".4"')}
+    ${tx(160,134,'同一份逻辑空间 · 两种手性 · 一侧的开关改变另一侧地形','sk-t3')}`);
+  if(m==='observer') return svg(`
+    ${rc(10,18,142,102,10,'f-ground2')}${rc(168,18,142,102,10,'f-ground2')}
+    ${tx(81,32,'全局地图（看不到自己）','sk-t3')}
+    ${tx(239,32,'只看得到自己的视角','sk-t3')}
+    ${ln(34,44,34,106,'s-line','stroke-width=".8" opacity=".7"')}${ln(66,44,66,106,'s-line','stroke-width=".8" opacity=".7"')}${ln(98,44,98,106,'s-line','stroke-width=".8" opacity=".7"')}${ln(128,44,128,106,'s-line','stroke-width=".8" opacity=".7"')}
+    ${ln(26,60,136,60,'s-line','stroke-width=".8" opacity=".7"')}${ln(26,76,136,76,'s-line','stroke-width=".8" opacity=".7"')}${ln(26,92,136,92,'s-line','stroke-width=".8" opacity=".7"')}
+    ${ci(50,68,5,'f-fire')}${ci(82,84,5,'f-ice')}${ci(114,68,5,'f-warn')}
+    ${tx(81,116,'自己的角色：？','sk-t3')}
+    ${pa('M239 44 L200 110 H278 Z','f-soft','opacity=".22"')}
+    ${ci(239,96,7,'f-fire')}${tx(239,66,'视角内可见','sk-t3')}
+    ${rc(200,50,18,8,2,'f-soft','opacity=".6"')}
+    ${tx(160,134,'两块面板互补 → 必须依靠语言传递信息（可定期互换角色）','sk-t3')}`);
+  if(m==='truth') return svg(`
+    ${rc(18,10,124,20,10,'f-panel s-line','stroke-width="1"')}${tx(80,24,'「他先松的手」','sk-t3')}
+    ${rc(178,10,124,20,10,'f-panel s-line','stroke-width="1"')}${tx(240,24,'「是她先离开的」','sk-t3')}
+    ${rc(10,38,142,74,10,'f-ground2')}${rc(168,38,142,74,10,'f-ground2')}
+    ${ln(18,94,144,94,'s-ink','stroke-width="2"')}${rc(60,74,28,20,4,'f-soft','opacity=".75"')}
+    ${ln(176,94,242,94,'s-ink','stroke-width="2"')}${ln(264,94,306,94,'s-ink','stroke-width="2"')}
+    ${rc(242,88,22,6,2,'f-ice')}${rc(196,74,28,20,4,'f-soft','opacity=".75"')}
+    ${tx(160,130,'同一段对白、同一片地形，两台机器上不同 → 分歧点＝需双方确认的开关','sk-t3')}`);
+  if(m==='comms') return svg(`
+    ${tx(160,20,'进入干扰区前先约定暗号：短-短-长','sk-t2')}
+    ${rc(8,32,92,80,10,'f-ground2')}${rc(220,32,92,80,10,'f-ground2')}
+    ${rc(112,32,96,80,8,'f-hatch','opacity=".9"')}
+    ${rc(112,32,96,80,8,'f-none s-soft','stroke-width="1.2" stroke-dasharray="4 4"')}
+    ${ci(46,72,7,'f-fire')}${ci(274,72,7,'f-ice')}
+    ${rc(142,56,36,24,8,'f-panel s-line','stroke-width="1.2"')}
+    ${pa('M148 60 l24 16 M172 60 l-24 16','s-bad','stroke-width="2.4"')}
+    ${tx(160,96,'看不到对方画面','sk-t3')}
+    ${tx(160,130,'干扰区边界可见，区内机关需要精确时序 → 事先约定必须足够明确','sk-t3')}`);
+  return svg('');
+};
+
+/* ---------------- 物理沙盒 ---------------- */
+VIZ.physics = d => {
+  const m = d.mode;
+  if(m==='build') return svg(`
+    ${tx(160,18,'熔 塑形/焊接 · 霜 冷却/固定 · 缺一方＝半成品','sk-t2')}
+    ${ci(56,64,17,'f-none s-fire','stroke-width="2.4"')}${ci(56,64,4,'f-fire')}
+    ${ln(56,47,56,81,'s-fire','stroke-width="1" opacity=".6"')}${ln(39,64,73,64,'s-fire','stroke-width="1" opacity=".6"')}
+    ${rc(84,56,58,16,8,'f-panel s-line','stroke-width="1.2"')}
+    ${rc(150,48,56,14,7,'f-panel s-line','stroke-width="1.2"')}
+    ${ci(248,64,19,'f-none s-ice','stroke-width="2.4"')}${ci(248,64,5,'f-ice')}
+    ${ln(73,64,84,64,'s-soft','stroke-width="1.4" stroke-dasharray="3 3"')}
+    ${ln(142,60,150,55,'s-soft','stroke-width="1.4" stroke-dasharray="3 3"')}
+    ${ln(206,55,229,60,'s-soft','stroke-width="1.4" stroke-dasharray="3 3"')}
+    ${pa('M76 60 l5 4 -5 4 -5 -4 z','f-warn')}${pa('M146 53 l5 4 -5 4 -5 -4 z','f-warn')}${pa('M215 53 l5 4 -5 4 -5 -4 z','f-warn')}
+    ${rc(44,100,232,11,5,'f-panel')}${rc(44,100,190,11,5,'f-warn')}
+    ${ln(234,96,234,115,'s-bad','stroke-width="2.2"')}
+    ${tx(240,108,'强度上限','sk-t3','start')}
+    ${tx(160,134,'焊接点超出强度即断裂 →「造得多」不一定通过','sk-t3')}`);
+  if(m==='buoy') return svg(`
+    ${tx(160,16,'两人共乘一个平台','sk-t3')}
+    <ellipse cx="160" cy="34" rx="30" ry="20" class="f-fire" opacity=".8"/>
+    ${ln(144,52,144,86,'s-soft','stroke-width="1.2"')}${ln(176,52,176,86,'s-soft','stroke-width="1.2"')}
+    ${rc(110,86,100,12,6,'f-panel s-line','stroke-width="1.2"')}
+    ${ci(140,80,7,'f-fire')}${ci(180,80,7,'f-ice')}
+    ${tx(140,66,'熔','sk-t3')}${tx(180,66,'霜','sk-t3')}
+    ${arw(92,82,92,42,'mFire','s-fire')}${tx(70,34,'熔加热','sk-t3')}
+    ${arw(228,42,228,82,'mIce','s-ice')}${tx(252,34,'霜冷却','sk-t3')}
+    ${tx(160,112,'站位影响重心与载荷','sk-t3')}
+    ${tx(160,132,'上升需要持续供热 → 动力与精度互相制约','sk-t3')}`);
+  if(m==='water') return svg(`
+    ${pa('M276 30 C258 4 76 4 62 24','s-ok','fill="none" stroke-width="2" marker-end="url(#mOk)"')}
+    ${tx(160,10,'蒸汽遇冷凝结为雨，回到原处','sk-t3')}
+    ${ci(60,46,19,'f-none s-line','stroke-width="2"')}${tx(60,50,'冰','sk-t4')}
+    ${ci(160,88,19,'f-none s-line','stroke-width="2"')}${tx(160,92,'水','sk-t4')}
+    ${ci(260,46,19,'f-none s-line','stroke-width="2"')}${tx(260,50,'汽','sk-t4')}
+    ${arw(146,80,76,56,'mIce','s-ice')}${tx(102,90,'霜 冻结','sk-t3')}
+    ${arw(176,80,244,56,'mFire','s-fire')}${tx(218,90,'熔 蒸发','sk-t3')}
+    ${tx(160,130,'闭合循环：一次转换的后果会在一段时间后返回原点','sk-t3')}`);
+  if(m==='balance') return svg(`
+    ${tx(28,56,'熔：熔化配重块','sk-t3','start')}${ci(22,53,4,'f-fire')}
+    ${tx(292,56,'霜：绳索变脆','sk-t3','end')}${ci(298,53,4,'f-ice')}
+    <g transform="rotate(-8 160 84)">
+      ${ln(58,84,262,84,'s-ink','stroke-width="3.4"')}
+      ${ln(78,84,78,92,'s-soft','stroke-width="1.4"')}${ln(242,84,242,92,'s-soft','stroke-width="1.4"')}
+      ${rc(58,92,40,9,3,'f-fire','opacity=".85"')}${rc(222,92,40,9,3,'f-ice','opacity=".85"')}
+    </g>
+    ${pa('M152 84 H168 L160 70 Z','f-soft')}
+    ${tx(160,126,'机关需要维持在一个区间内一段时间 → 两人持续协商位置','sk-t3')}`);
+  return svg('');
+};
+
+/* ---------------- 控制结构 ---------------- */
+VIZ.control = d => {
+  const m = d.mode;
+  if(m==='swap') return svg(`
+    ${tx(160,16,'双方可以在任意时刻互换操作的角色','sk-t2')}
+    ${rc(14,26,134,78,10,'f-ground2')}${rc(172,26,134,78,10,'f-ground2')}
+    ${tx(81,42,'玩家1','sk-t3')}${tx(239,42,'玩家2','sk-t3')}
+    ${ci(48,66,9,'f-fire')}${ci(258,66,9,'f-ice')}
+    ${rc(34,84,94,9,3,'f-fire','opacity=".35"')}${tx(81,110,'熔能通过的地形','sk-t3')}
+    ${rc(192,84,94,9,3,'f-ice','opacity=".35"')}${tx(239,110,'霜能通过的地形','sk-t3')}
+    ${pa('M148 68 H172','s-ink','stroke-width="2" marker-start="url(#mInk)" marker-end="url(#mInk)"')}
+    ${tx(160,128,'互换有冷却，所以时机选择本身是操作','sk-t3')}`);
+  if(m==='console') return svg(`
+    ${rc(10,24,140,86,10,'f-ground2')}${rc(170,24,140,86,10,'f-ground2')}
+    ${tx(80,40,'玩家2 · 操作角色','sk-t3')}${tx(240,40,'玩家1 · 操作房间与机关','sk-t3')}
+    ${pa('M20 96 H92','s-ink','stroke-width="2"')}${pa('M110 82 H142','s-ink','stroke-width="2"')}
+    ${pa('M92 96 V82 H110','s-ink','stroke-width="2"')}
+    ${ci(56,86,8,'f-fire')}
+    ${ln(190,54,196,66,'s-ink','stroke-width="2.4"')}${ci(190,52,4,'f-soft')}
+    ${ln(226,62,232,54,'s-ink','stroke-width="2.4"')}${ci(232,52,4,'f-soft')}
+    ${ln(262,54,268,66,'s-ink','stroke-width="2.4"')}${ci(268,52,4,'f-soft')}
+    ${rc(200,74,80,26,6,'f-panel s-line','stroke-width="1.1"')}${rc(240,76,10,22,2,'f-ok','opacity=".55"')}
+    ${tx(240,114,'控制方的工具是房间本身','sk-t3')}
+    ${tx(160,134,'胜负绑定：角色失败则本局对两人同时结束','sk-t3')}`);
+  return svg('');
+};
+
+/* ---------------- 叙事层 ---------------- */
+VIZ.narrative = d => {
+  const m = d.mode;
+  if(m==='choice') return svg(`
+    ${tx(160,14,'每章结尾两人各自做一次选择，做出决定前看不到对方','sk-t3')}
+    ${rc(30,24,92,58,10,'f-panel s-line','stroke-width="1.2"')}${tx(76,64,'?','sk-t5')}
+    ${tx(76,98,'玩家1 的选择','sk-t3')}
+    ${rc(198,24,92,58,10,'f-panel s-line','stroke-width="1.2"')}${tx(244,64,'?','sk-t5')}
+    ${tx(244,98,'玩家2 的选择','sk-t3')}
+    ${arw(160,90,160,102,'mInk','s-ink')}
+    ${rc(91,108,30,20,5,'f-panel s-line','stroke-width="1"')}${ci(106,118,5,'f-fire')}
+    ${rc(127,108,30,20,5,'f-panel s-line','stroke-width="1"')}${ci(142,118,5,'f-ice')}
+    ${rc(163,108,30,20,5,'f-panel s-line','stroke-width="1"')}${pa('M170 118 l6 6 l8 -12','s-ok','fill="none" stroke-width="2.4"')}
+    ${rc(199,108,30,20,5,'f-panel s-line','stroke-width="1"')}${pa('M206 113 l14 12 M220 113 l-14 12','s-bad','stroke-width="2.2"')}
+    ${tx(160,138,'两个选择的组合决定下一章的形态，结果不广播','sk-t3')}`);
+  if(m==='silent') return svg(`
+    ${rc(20,26,96,30,12,'f-panel s-line','stroke-width="1.2"')}
+    ${pa('M40 34 L96 48 M96 34 L40 48','s-bad','stroke-width="2.4"')}
+    ${tx(68,70,'不设对白','sk-t3')}
+    ${tx(68,88,'文本量 ≈ 0','sk-t3')}
+    ${rc(132,22,52,46,9,'f-ground2')}${ci(158,40,6,'f-fire')}${rc(140,52,36,6,3,'f-ice','opacity=".6"')}
+    ${rc(200,22,52,46,9,'f-ground2')}${ci(226,40,7,'f-ice')}
+    ${rc(268,22,52,46,9,'f-ground2')}${ln(268,60,320,60,'s-line','stroke-width="1.6"')}${rc(276,40,26,16,4,'f-soft','opacity=".6"')}
+    ${arw(186,45,196,45,'mInk','s-ink')}${arw(254,45,264,45,'mInk','s-ink')}
+    ${tx(158,84,'融化','sk-t3')}${tx(226,84,'凝固','sk-t3')}${tx(294,84,'改写','sk-t3')}
+    ${tx(160,132,'机制即叙事：同一片区域在不同章节里被改写，成本在美术与关卡','sk-t3')}`);
+  return svg('');
+};
+
+/* ---------------- 持久与元结构 ---------------- */
+VIZ.meta = d => {
+  const m = d.mode;
+  if(m==='memory') return svg(`
+    ${rc(14,26,132,80,10,'f-ground2')}
+    ${ln(24,88,72,88,'s-ink','stroke-width="1.6"')}${ln(98,88,136,88,'s-ink','stroke-width="1.6"')}
+    ${ci(50,80,6,'f-fire')}
+    ${pa('M84 74 l10 10 M94 74 l-10 10','s-bad','stroke-width="2.2"')}
+    ${tx(80,42,'上次：在这里失败','sk-t3')}
+    ${arw(150,66,170,66,'mInk','s-ink')}
+    ${rc(174,26,132,80,10,'f-ground2')}
+    ${ln(184,88,232,88,'s-ink','stroke-width="1.6"')}${ln(258,88,296,88,'s-ink','stroke-width="1.6"')}
+    ${rc(232,84,26,6,2,'f-fire','opacity=".9"')}
+    ${ci(210,80,6,'f-ice')}${ci(244,74,4,'f-ice','opacity=".55"')}
+    ${tx(240,42,'再次进入：变体更宽','sk-t3')}
+    ${tx(160,126,'记录失败位置与原因，隐式自适应，不需要玩家手动选择','sk-t3')}`);
+  if(m==='traces') return svg(`
+    ${rc(16,20,288,98,10,'f-ground2')}
+    ${rc(34,34,56,20,4,'f-warn','opacity=".85" transform="rotate(-6 62 44)"')}
+    ${rc(40,62,56,20,4,'f-fire','opacity=".7" transform="rotate(4 68 72)"')}
+    ${rc(30,88,58,18,4,'f-ice','opacity=".7" transform="rotate(-3 59 97)"')}
+    ${ci(150,74,11,'f-none s-ink','stroke-width="1.6" stroke-dasharray="4 3"')}${ci(150,74,3,'f-ink')}
+    ${rc(196,68,58,14,6,'f-panel s-line','stroke-width="1.2"')}${ci(268,75,10,'f-none s-ice','stroke-width="2"')}
+    ${rc(196,32,84,18,9,'f-panel s-soft','stroke-width="1.2"')}${tx(238,45,'审核与过滤','sk-t3')}
+    ${tx(150,104,'别人的痕迹','sk-t3')}
+    ${tx(160,132,'其他玩家组合的遗留物 · 依赖服务端持久存储与内容治理','sk-t3')}`);
+  if(m==='eco') return svg(`
+    ${tx(160,14,'两人的行为影响生物数量与分布，而不直接决定关卡成败','sk-t3')}
+    ${pa('M20 96 C56 44 84 112 122 64 C158 22 190 104 228 58 C252 30 274 50 300 40','s-ok','fill="none" stroke-width="2.2"')}
+    ${ci(40,80,5,'f-ok')}${ci(78,92,4,'f-ok')}${ci(122,64,6,'f-ok')}${ci(160,50,4,'f-ok')}${ci(206,88,5,'f-ok')}${ci(248,44,6,'f-ok')}${ci(288,42,4,'f-ok')}
+    ${arw(60,118,112,102,'mFire','s-fire')}
+    ${tx(56,134,'玩家干预改变环境条件','sk-t3','start')}${tx(300,132,'结果不可完全预测','sk-t3','end')}`);
+  if(m==='camp') return svg(`
+    ${rc(14,58,74,22,9,'f-panel s-line','stroke-width="1.2"')}${tx(51,72,'关卡产出','sk-t3')}
+    ${arw(92,69,122,69,'mWarn','s-warn')}
+    ${pa('M150 44 L170 56 L170 80 L150 92 L130 80 L130 56 Z','f-fire','opacity=".28"')}
+    ${pa('M150 44 L170 56 L170 80 L150 92 L130 80 L130 56 Z','s-fire','fill="none" stroke-width="2"')}
+    ${pa('M150 60 L156 76 H144 Z','f-fire')}
+    ${tx(150,104,'据点','sk-t3')}
+    ${ln(170,68,214,36,'s-soft','stroke-width="1.4"')}${ln(170,68,240,68,'s-soft','stroke-width="1.4"')}${ln(170,68,214,100,'s-soft','stroke-width="1.4"')}
+    ${ci(228,30,13,'f-panel s-line','stroke-width="1.2"')}${tx(246,34,'工作台','sk-t3','start')}
+    ${ci(258,68,13,'f-panel s-line','stroke-width="1.2"')}${tx(276,72,'传送点','sk-t3','start')}
+    ${ci(228,106,13,'f-panel s-line','stroke-width="1.2"')}${tx(246,110,'试验场','sk-t3','start')}
+    ${tx(160,136,'共享持久进度：据点提供的增益会直接改变后续关卡的玩法','sk-t3')}`);
+  if(m==='survival') return svg(`
+    ${rc(12,44,104,72,10,'f-ground2')}
+    ${pa('M36 74 A28 28 0 0 1 92 74','s-fire','fill="none" stroke-width="3"')}
+    ${pa('M64 84 L70 100 H58 Z','f-fire')}
+    ${tx(64,116,'营地温度','sk-t3')}${ci(40,60,6,'f-ice')}
+    ${ln(124,32,124,118,'s-soft','stroke-width="1.4" stroke-dasharray="5 5"')}
+    ${rc(132,44,176,72,10,'f-ground2')}
+    ${pa('M162 58 l7 7 -7 7 -7 -7 z','f-ice','opacity=".9"')}
+    ${pa('M196 86 l7 7 -7 7 -7 -7 z','f-ice','opacity=".9"')}
+    ${pa('M240 58 l7 7 -7 7 -7 -7 z','f-ice','opacity=".9"')}
+    ${ci(286,60,11,'f-none s-ink','stroke-width="1.6"')}${ln(286,60,286,53,'s-ink','stroke-width="1.4"')}${ln(286,60,292,63,'s-ink','stroke-width="1.4"')}
+    ${ci(180,106,6,'f-fire')}
+    ${tx(286,84,'昼夜','sk-t3')}
+    ${tx(160,134,'资源 · 温度 · 昼夜 · 建筑 四套系统叠加，分头行动又互相依赖','sk-t3')}`);
+  if(m==='rooms'){
+    let tiles='';
+    [24,88,152,216].forEach(x=>{tiles+=rc(x,20,56,26,7,'f-panel s-line','stroke-width="1.1"')+rc(x+22,14,12,8,3,'f-soft','opacity=".8"');});
+    let asm='';
+    [40,120,200].forEach((x,i)=>{asm+=rc(x,70,76,30,8,'f-panel s-line','stroke-width="1.2"');
+      asm+=rc(x+30,62,16,8,3,'f-ok','opacity=".9"')+rc(x+30,100,16,8,3,'f-ok','opacity=".9"');});
+    return svg(`
+      ${tx(160,12,'房间池：接口规则决定能不能拼','sk-t3')}
+      ${tiles}
+      ${arw(160,52,160,64,'mInk','s-ink')}
+      ${asm}
+      ${arw(280,85,298,85,'mOk','s-ok')}
+      ${tx(160,120,'拼接结果必须保证可通行 · 共享一份元素升级（可与 A2 合并）','sk-t3')}`);
+  }
+  if(m==='editor') return svg(`
+    ${tx(160,14,'编辑器只暴露当前关卡已有的机关，设计成本有限','sk-t3')}
+    ${rc(14,30,134,64,10,'f-ground2')}${tx(81,46,'玩家A 设计谜题','sk-t3')}
+    ${ln(30,58,132,58,'s-line','stroke-width=".8" opacity=".7"')}${ln(64,58,64,88,'s-line','stroke-width=".8" opacity=".7"')}${ln(98,58,98,88,'s-line','stroke-width=".8" opacity=".7"')}
+    ${rc(70,64,24,14,4,'f-fire','opacity=".5"')}${ci(110,80,4,'f-warn')}
+    ${rc(172,30,134,64,10,'f-ground2')}${tx(239,46,'玩家B 解谜','sk-t3')}
+    ${pa('M182 86 H300','s-ink','stroke-width="2"')}${ci(216,78,8,'f-ice')}
+    ${arw(150,54,168,54,'mInk','s-ink')}${arw(168,78,150,78,'mInk','s-ink')}
+    ${rc(60,104,200,10,5,'f-panel')}${rc(60,104,140,10,5,'f-warn')}
+    ${tx(160,128,'评分：用时 / 尝试次数 / 是否用了设计者预期的思路','sk-t3')}
+    ${tx(160,140,'评分反过来决定自己下一关的难度','sk-t3')}`);
+  return svg('');
+};
+</script><script>
+/* ============================================================
+   界面层：矩阵 / 筛选 / 卡片 / 表格 / 优先验证
+   ============================================================ */
+const byId = id => DATA.find(d => d.id === id);
+const costCls = c => c==='低' ? 'low' : c==='中' ? 'mid' : 'high';
+const costCls2 = c => c==='低' ? 'cl' : c==='中' ? 'cm' : 'ch';
+const COSTCOL = {'低':'#34d399','中':'#fbbf24','高':'#f87171'};
+
+function renderStats(){
+  const cnt = {'低':0,'中':0,'高':0};
+  DATA.forEach(d => cnt[d.cost]++);
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="n">${DATA.length}</div><div class="l">个方案</div></div>
+    <div class="stat"><div class="n">${Object.keys(CATS).length}<span style="font-size:14px;font-weight:600"> 类 · </span>${FORM_ORDER.length}<span style="font-size:14px;font-weight:600"> 形式</span></div><div class="l">分类只是组织方式</div></div>
+    <div class="stat low"><div class="n">${cnt['低']}</div><div class="l">低成本 · 单关内即可验证</div></div>
+    <div class="stat mid"><div class="n">${cnt['中'] + cnt['高']}</div><div class="l">中/高成本 · 需要新系统</div></div>`;
+  document.getElementById('costlegend').innerHTML = COST_ORDER.map(c => `
+    <li><span class="cost ${costCls(c)}">${c}</span><span><b style="color:var(--txt)">${cnt[c]} 个</b> · ${COST_DESC[c]}</span></li>`).join('');
+  const max = Math.max(...FORM_ORDER.map(f => DATA.filter(d => d.form===f).length));
+  document.getElementById('formdist').innerHTML = FORM_ORDER.map(f => {
+    const n = DATA.filter(d => d.form===f).length;
+    return `<div class="fd" title="${FORMS[f].i}"><span>${FORMS[f].n}</span><span class="fdbar"><i style="width:${n/max*100}%;background:${FORMS[f].c}"></i></span><span>${n}</span></div>`;
+  }).join('');
+}
+
+function renderMatrix(){
+  const head = `<tr><th class="rowh">分类 \\ 形式</th>${FORM_ORDER.map(f=>`<th>${FORMS[f].n}<span>${FORMS[f].s}</span></th>`).join('')}<th style="width:104px">成本构成</th></tr>`;
+  const rows = Object.keys(CATS).map(cat => {
+    const list = DATA.filter(d => d.cat===cat);
+    const cells = FORM_ORDER.map(f => {
+      const items = list.filter(d => d.form===f);
+      const inner = items.map(d => `<span class="mxdot ${costCls2(d.cost)}" data-jump="${d.id}" title="${d.id} ${d.name} · 成本${d.cost}">${d.id}</span>`).join('');
+      return `<td class="mxcell${items.length?' has':''}" data-cat="${cat}" data-form="${f}">${inner}</td>`;
+    }).join('');
+    const bars = COST_ORDER.map(c => {
+      const n = list.filter(d => d.cost===c).length;
+      return n ? `<i style="width:${n/list.length*100}%;background:${COSTCOL[c]}"></i>` : '';
+    }).join('');
+    return `<tr><th class="rowh"><span class="rt">${cat}. ${CATS[cat].n}</span><span class="cn">${list.length} 个方案 · ${CATS[cat].i.slice(0,22)}…</span></th>${cells}<td><div class="minibar">${bars}</div></td></tr>`;
+  }).join('');
+  document.getElementById('matrixBox').innerHTML = `<table class="mx"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+}
+
+const F = {cost:'all', cat:'all', form:'all', q:''};
+function match(d){
+  if(F.cost!=='all' && d.cost!==F.cost) return false;
+  if(F.cat!=='all' && d.cat!==F.cat) return false;
+  if(F.form!=='all' && d.form!==F.form) return false;
+  if(F.q){
+    const hay = [d.id,d.name,d.tag,d.concept,d.mech.join(' '),d.synergy,d.costNote,CATS[d.cat].n,CATS[d.cat].i,FORMS[d.form].n,FORMS[d.form].i].join(' ').toLowerCase();
+    if(hay.indexOf(F.q.toLowerCase()) < 0) return false;
+  }
+  return true;
+}
+function chipHTML(kind, val, label, cnt, color){
+  return `<span class="chip" data-f="${kind}" data-v="${val}">${color?`<i class="dot" style="background:${color}"></i>`:''}${label}${cnt!=null?` <span class="cnt">${cnt}</span>`:''}</span>`;
+}
+function renderFilters(){
+  document.getElementById('filters').innerHTML = `
+    <div class="frow"><span class="flabel">成本</span><div class="chips" id="fCost"></div></div>
+    <div class="frow"><span class="flabel">分类</span><div class="chips" id="fCat"></div></div>
+    <div class="frow"><span class="flabel">形式</span><div class="chips" id="fForm"></div></div>
+    <div class="frow"><span class="flabel">搜索</span><input id="q" type="search" placeholder="方案名 / 编号 / 关键词，例如：温度、镜像、服务端"><span class="resline" id="resline"></span></div>`;
+  const cnt = fn => DATA.filter(fn).length;
+  document.getElementById('fCost').innerHTML = chipHTML('cost','all','全部',DATA.length) + COST_ORDER.map(c => chipHTML('cost',c,c,cnt(d=>d.cost===c))).join('');
+  document.getElementById('fCat').innerHTML = chipHTML('cat','all','全部',DATA.length) + Object.keys(CATS).map(k => chipHTML('cat',k,k+' '+CATS[k].n,cnt(d=>d.cat===k),CATS[k].c)).join('');
+  document.getElementById('fForm').innerHTML = chipHTML('form','all','全部',DATA.length) + FORM_ORDER.map(f => chipHTML('form',f,FORMS[f].n,cnt(d=>d.form===f),FORMS[f].c)).join('');
+  markChips();
+}
+function markChips(){
+  document.querySelectorAll('.chip[data-f]').forEach(el => el.classList.toggle('on', F[el.dataset.f] === el.dataset.v));
+}
+function applyFilters(){
+  let shown = 0;
+  DATA.forEach(d => {
+    const ok = match(d);
+    if(ok) shown++;
+    const card = document.getElementById('s-'+d.id); if(card) card.classList.toggle('hide', !ok);
+    const row  = document.getElementById('r-'+d.id); if(row)  row.classList.toggle('hide', !ok);
+  });
+  Object.keys(CATS).forEach(k => {
+    const g = document.getElementById('g-'+k); if(!g) return;
+    g.classList.toggle('hide', !DATA.some(d => d.cat===k && match(d)));
+  });
+  const rl = document.getElementById('resline');
+  if(rl) rl.textContent = shown ? `显示 ${shown} / ${DATA.length} 个方案` : `没有匹配的方案（共 ${DATA.length} 个）`;
+  markChips();
+}
+
+function cardHTML(d){
+  const cat = CATS[d.cat];
+  return `<article class="card scheme" id="s-${d.id}" style="--acc:${cat.c}" data-id="${d.id}">
+    <div class="ctop">
+      <span class="idb" style="color:${cat.c};border-color:${cat.c}66">${d.id}</span>
+      <h3>${d.name}</h3>
+      <span class="cost ${costCls(d.cost)}" style="margin-left:auto">成本 · ${d.cost}</span>
+    </div>
+    <div class="msvg">${VIZ[d.form](d)}</div>
+    <div class="tagline">${d.tag}</div>
+    <div class="blk"><h4>概念</h4><p>${d.concept}</p></div>
+    <div class="blk"><h4>核心机制</h4><ul>${d.mech.map(x=>`<li>${x}</li>`).join('')}</ul></div>
+    <div class="blk syn"><h4>结合点</h4><p>${d.synergy}</p></div>
+    <div class="blk cn"><h4>增量成本 · ${d.cost}</h4><p>${d.costNote}</p></div>
+    <div class="rel">
+      <span>分类 ${d.cat} · ${cat.n}</span>
+      <span>形式 <b style="color:${FORMS[d.form].c};font-weight:600">${FORMS[d.form].n}</b></span>
+      ${(d.rel&&d.rel.length) ? `<span>相关</span>${d.rel.map(r=>`<span class="relchip" data-jump="${r}">${r} ${byId(r)?byId(r).name:''}</span>`).join('')}` : ''}
+    </div>
+  </article>`;
+}
+function renderCards(){
+  document.getElementById('cardArea').innerHTML = Object.keys(CATS).map(k => {
+    const list = DATA.filter(d => d.cat===k);
+    return `<div class="group" id="g-${k}" style="--acc:${CATS[k].c}">
+      <div class="grouphead">
+        <span class="gtag">${k}</span>
+        <div><div class="gtitle">${k}. ${CATS[k].n}</div><div class="gintro">${CATS[k].i}</div></div>
+        <span class="gcount">${list.length} 个</span>
+      </div>
+      <div class="cards">${list.map(cardHTML).join('')}</div>
+    </div>`;
+  }).join('');
+}
+function tableHTML(){
+  const rows = DATA.map(d => `<tr id="r-${d.id}" data-jump="${d.id}">
+      <td class="idc" style="color:${CATS[d.cat].c}">${d.id}</td>
+      <td><b>${d.name}</b></td>
+      <td>${d.cat} · ${CATS[d.cat].n}</td>
+      <td>${FORMS[d.form].n}</td>
+      <td><span class="cost ${costCls(d.cost)}">${d.cost}</span></td>
+      <td>${d.tag.replace(/^形式：/,'')}</td>
+      <td class="tagnc">${d.concept}</td>
+    </tr>`).join('');
+  return `<div id="tableView" class="card tablewrap" style="display:none;padding:4px">
+    <table class="tv"><thead><tr><th>编号</th><th>名称</th><th>分类</th><th>形式</th><th>成本</th><th>形式说明</th><th>概念</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function renderPriority(){
+  document.getElementById('prioList').innerHTML = PRIORITY.map((p,i) => {
+    const d = byId(p.id);
+    return `<div class="card pitem">
+      <div class="pnum">${i+1}</div>
+      <div>
+        <h4>
+          <span class="idb" style="color:${CATS[d.cat].c};border-color:${CATS[d.cat].c}66">${d.id}</span>${d.name}
+          <span class="cost ${costCls(d.cost)}">成本 · ${d.cost}</span>
+          <span style="font-size:12px;color:var(--txt2)">${FORMS[d.form].n}</span>
+        </h4>
+        <p class="why">${p.why}</p>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('notdo').innerHTML = `<b>暂不建议优先做：</b>${NOTDO.join('、')}
+    <div style="margin-top:4px">${NOTDO_WHY}</div>
+    <div class="chips" style="margin-top:8px">${NOTDO.map(id=>`<span class="relchip" data-jump="${id}">${id} ${byId(id).name}</span>`).join('')}</div>`;
+  document.getElementById('relbox').innerHTML = RELNOTES.map(r => `<div class="relrow">
+      <span class="relchip" data-jump="${r[0]}">${r[0]} ${byId(r[0]).name}</span>
+      <span>↔</span>
+      <span class="relchip" data-jump="${r[1]}">${r[1]} ${byId(r[1]).name}</span>
+      <span>${r[2]}</span></div>`).join('');
+}
+
+let view = 'cards';
+function setView(v){
+  view = v;
+  const ca = document.getElementById('cardArea'), tv = document.getElementById('tableView');
+  if(ca) ca.style.display = v==='cards' ? '' : 'none';
+  if(tv) tv.style.display = v==='table' ? '' : 'none';
+  const btn = document.getElementById('viewBtn');
+  if(btn) btn.textContent = v==='cards' ? '表格视图' : '卡片视图';
+}
+function jump(id){
+  F.cost = 'all'; F.cat = 'all'; F.form = 'all'; F.q = '';
+  const qi = document.getElementById('q'); if(qi) qi.value = '';
+  setView('cards');
+  applyFilters();
+  const el = document.getElementById('s-'+id);
+  if(!el) return;
+  el.scrollIntoView({behavior:'smooth', block:'center'});
+  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+}
+
+function init(){
+  renderStats(); renderMatrix(); renderFilters(); renderCards();
+  document.getElementById('cardArea').insertAdjacentHTML('afterend', tableHTML());
+  renderPriority(); applyFilters();
+  document.getElementById('q').addEventListener('input', e => { F.q = e.target.value.trim(); applyFilters(); });
+  document.getElementById('themeBtn').addEventListener('click', () => {
+    const html = document.documentElement;
+    const dark = html.dataset.theme === 'dark';
+    html.dataset.theme = dark ? 'light' : 'dark';
+    document.getElementById('themeBtn').textContent = dark ? '🌙 深色' : '☀️ 浅色';
+  });
+  document.getElementById('viewBtn').addEventListener('click', () => setView(view === 'cards' ? 'table' : 'cards'));
+  document.addEventListener('click', e => {
+    const j = e.target.closest('[data-jump]');
+    if(j){ jump(j.dataset.jump); return; }
+    const chip = e.target.closest('.chip[data-f]');
+    if(chip){ F[chip.dataset.f] = chip.dataset.v; applyFilters(); return; }
+    const cell = e.target.closest('td.mxcell');
+    if(cell){
+      F.cat = cell.dataset.cat; F.form = cell.dataset.form;
+      applyFilters();
+      document.getElementById('cards').scrollIntoView({behavior:'smooth', block:'start'});
+    }
+  });
+}
+if(typeof document !== 'undefined' && document.getElementById) init();
+</script>
+</body>
+</html>
