@@ -231,6 +231,29 @@ func _finish_session(reason: String) -> void:
 	server_left.emit(reason)
 
 
+## 告诉各客户端本次会话即将结束，然后关闭。由 main.gd 在退出时调用。
+##
+## **手动 poll() 是这里的关键。** 引擎平日每帧替我们 poll 一次，但调用这个方法时进程即将
+## 结束、不会再有任何一帧，不主动 poll 的话 RPC 只会留在发送队列里随进程一起消失。
+## 2026-09-26 实测过这个差别：不 poll 时服务端虽然调了 close()，客户端却仍然要等
+## 心跳超时（5 秒）才发现，也就是主动告知完全没生效；加一行 poll() 之后降到一秒以内。
+## tools/check-server.mjs 会守住这个差别（预算 3.5 秒，明显短于心跳阈值）。
+func shutdown_gracefully() -> void:
+	if role == Role.OFFLINE or not multiplayer.has_multiplayer_peer():
+		return
+	for id in multiplayer.get_peers():
+		goodbye.rpc_id(id)
+	multiplayer.poll()
+	close()
+
+
+## 服务端主动告知的收尾。与心跳超时走同一条路径，因此上层只处理一次。
+## 用 reliable：这个包丢失就失去了主动告知的意义，而它只在结束时发一次，重传的代价可忽略。
+@rpc("authority", "call_remote", "reliable")
+func goodbye() -> void:
+	_finish_session("主机已关闭房间")
+
+
 func _on_connected_to_server() -> void:
 	join_succeeded.emit()
 
