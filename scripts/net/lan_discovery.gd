@@ -7,7 +7,7 @@ extends Node
 ##   `listen_for_rooms()`   选房侧，绑定固定端口接收广播，并在房间超时后把它移除
 ##
 ## 为什么是"主机广播、选房侧只听"，而不是"选房侧广播询问、主机应答"：
-## 后者要求主机也绑定 DISCOVERY_PORT 才能收到询问，于是同一台机器上开两个实例
+## 后者要求主机也绑定 discovery_port 才能收到询问，于是同一台机器上开两个实例
 ##（一个当主机、一个停在初始界面）会争抢同一个端口。让选房侧独占该端口、
 ## 主机用临时端口发送，两边就不冲突；代价是主机每秒多发出一个很小的包。
 ##
@@ -23,7 +23,13 @@ extends Node
 
 ## 探测用的端口，与游戏端口（Net.DEFAULT_PORT）分开。
 ## 分开的另一个好处是主机换游戏端口时不影响探测，选房侧始终只听这一个端口。
-const DISCOVERY_PORT := 27016
+##
+## 这里是 static var 而不是 const，只为了自动检查能换一个不常用的端口：
+## 开发时编辑器里运行的游戏也停在初始界面、也绑定这个端口，
+## 于是"开着游戏跑自检"会以「UDP 27016 无法监听」失败，而那行错误看起来像探测功能坏了。
+## 测试各自把它写到自检端口，因此两种事可以同时做。跑起游戏的人不会感知。
+## **两端必须取到同一个值**，所以只有测试会改它，没有对应的命令行开关。
+static var discovery_port := 27016
 const MAGIC := "MOLTENFROST"
 ## 报文格式版本。字段含义变化时递增，旧版本的一律忽略。
 const PROTOCOL := 1
@@ -79,7 +85,7 @@ func announce(provider: Callable) -> void:
 	_provider = provider
 	var sock := PacketPeerUDP.new()
 	# 绑定临时端口：这个套接字只用于发送，因此不需要固定端口，
-	# 也就不会和同一台机器上选房侧要绑的 DISCOVERY_PORT 冲突。
+	# 也就不会和同一台机器上选房侧要绑的 discovery_port 冲突。
 	var err := sock.bind(ANY_PORT)
 	if err != OK:
 		push_error("局域网房间广播无法建立发送套接字：%s" % error_string(err))
@@ -113,7 +119,7 @@ func _announce_once() -> void:
 	var payload := encode_beacon(beacon)
 	# 改变目标地址不会影响这个套接字已有的绑定，因此两个地址可以共用同一个套接字。
 	for address in [BROADCAST_ADDRESS, LOCAL_ADDRESS]:
-		_send.set_dest_address(address, DISCOVERY_PORT)
+		_send.set_dest_address(address, discovery_port)
 		_send.put_packet(payload)
 
 
@@ -126,10 +132,10 @@ func listen_for_rooms() -> bool:
 	stop_listening()
 	var sock := PacketPeerUDP.new()
 	# 这个套接字必须是固定端口：主机侧只知道把广播发到哪个端口，无从得知接收方的临时端口。
-	var err := sock.bind(DISCOVERY_PORT)
+	var err := sock.bind(discovery_port)
 	if err != OK:
 		push_warning("UDP %d 无法监听（%s），本次运行时自动探测局域网房间不可用" % [
-			DISCOVERY_PORT, error_string(err),
+			discovery_port, error_string(err),
 		])
 		sock.close()
 		# 清空界面上的旧结果：这次绑定失败意味着收不到任何新的广播，

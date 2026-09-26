@@ -46,6 +46,8 @@ var _discovery: LanDiscovery = null
 var _room_name: String = ""
 ## 本次连接的 "地址:端口"，只用于提示文案。
 var _join_target: String = ""
+## `--advertise` 给的对外地址，只用于提示文案。空表示没给。
+var _advertise: String = ""
 var _port: int = 0
 var _notice: String = ""
 ## peer id 到槽位的对应，只在服务端维护。
@@ -90,6 +92,7 @@ func _build_menu() -> void:
 func _start_session() -> void:
 	var opts := NetCmdline.from_process()
 	_port = int(opts.get("port", Net.DEFAULT_PORT))
+	_advertise = String(opts.get("advertise", ""))
 	_stats_enabled = opts.has("net_stats")
 	# 手感数值可临时覆盖，便于不动代码地扫参。不给参数时取脚本里的默认值，
 	# 因此这里只是把命令行值写回同一个静态变量；推算式见 player.gd 里各自的注释。
@@ -230,8 +233,15 @@ func _start_announcing() -> void:
 			"players": multiplayer.get_peers().size() + 1,
 		})
 	print("[lan] 已在 UDP %d 广播房间「%s」（游戏端口 %d）" % [
-		LanDiscovery.DISCOVERY_PORT, _room_name, Net.port,
+		LanDiscovery.discovery_port, _room_name, Net.port,
 	])
+	# 把对方该填的地址明确写出来。服务器上大家都是看日志，而不是看 HUD，
+	# 因此这一行比界面上的提示更有用。自动探测到的地址不一定对（见 _advertise 的说明）。
+	var hint := _join_hint()
+	if not hint.is_empty():
+		print("[lan] 对方加入时填：%s" % hint)
+	else:
+		print("[lan] 未能自动判断对外地址，跨网联机时请用 --advertise <地址或域名> 指定")
 
 
 func _on_menu_host_requested(room_name: String, port: int) -> void:
@@ -251,11 +261,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		_return_to_menu("已离开房间，可以重新选择或自己创建。")
 
 
-## 本机最可能被同网段其他机器使用的地址，形如 `192.168.5.210:27015`。
-## 自动探测在正常情况下已经够用，这一条只是给"探测不到"时留的备用路径。
-func _lan_hint() -> String:
+## 对方应当填的 "地址:端口"。优先用 `--advertise` 给的值，否则用本机的局域网地址。
+## 存在的理由：云服务器上 IP.get_local_addresses() 只有 VPC 私网地址（172.16.x.x），
+## 对外没有意义；而公网地址是 NAT 映射的，网卡上根本不存在，程序无从得知。
+func _join_hint() -> String:
 	if _port <= 0:
 		return ""
+	if not _advertise.is_empty():
+		return "%s:%d" % [_advertise, _port]
 	for address in _lan_addresses():
 		return "%s:%d" % [address, _port]
 	return ""
@@ -502,7 +515,7 @@ func _refresh_status() -> void:
 			var room := "，房间「%s」" % _room_name if not _room_name.is_empty() else ""
 			lines.append("角色：%s%s，监听 %s" % [kind, room, _listen_label()])
 			# 自动探测在正常情况下已经够用，这一行是给"探测不到"时口头报地址用。
-			var hint := _lan_hint()
+			var hint := _join_hint()
 			if not hint.is_empty():
 				lines.append("其他机器手动加入时填：%s" % hint)
 		Net.Role.CLIENT:

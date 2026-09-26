@@ -158,6 +158,47 @@ Windows 机器（主机侧）：MediaTek Wi-Fi 6 MT7921，802.11ax，5 GHz 信�
   `JSON.parse_string()` 失败时会打一行引擎 ERROR，而这个端口本来就会收到别的程序的包。
 - **已知限制**：受限广播只走默认路由那块网卡，因此机器的默认路由若在 VPN 上，局域网里的另一台就收不到，
   此时只能手动填地址。另，`--port 0`（系统分配端口）时主机不广播，因为拿不到可以告诉别人的端口。
+- **探测端口是独占的**：同一台机器上同时只能有一个实例停在初始界面（第二个实例会以
+  「UDP 27016 无法监听」降级为手动填地址，界面会给提示）。这一条对自动检查的影响更隐蔽：
+  编辑器里运行的游戏也停在初始界面、也绑这个端口，于是「开着游戏跑 `node tools/net-smoke.mjs`」
+  会失败，而那行错误看起来像探测功能坏了。因此 `LanDiscovery.discovery_port` 是 static var 而不是 const，
+  三个自检脚本各自把它改到 27119；实测外部进程占住 27016 时冒烟测试仍然全过。
+
+## 连接尚未建立时不能发 RPC（2026-09-26 实测）
+
+`Net.join()` 一返回 `role` 就是 `CLIENT`，而 ENet 创建客户端是即时的：真正的连接结果要等
+`connection_failed` 或超时（实测约 32 秒）。**这段窗口里 `MultiplayerPeer` 已经设好但并不可用**，
+往它上面发 RPC 会报：
+
+```text
+ERROR: Trying to call an RPC via a multiplayer peer which is not connected.
+   at: _ping_peers (res://scripts/net/net.gd:79)
+```
+
+每秒两条地刷，直到超时。触发条件很常见：从界面填一个错地址或错端口加入。
+修法是 `Net.is_connected_to_server()`，用 `MultiplayerPeer.get_connection_status()`
+把「已连接」与「正在连接」分开，`_ping_peers()` 只在为真时发。
+服务端侧不需要这个判断——没有 peer 时 `get_peers()` 是空列表，循环本身不执行。
+
+回归守卫：`tools/net-smoke.mjs` 里有一段专门的检查（连一个没人监听的端口，跑三秒，
+断言日志里没有 `not connected`）。已用红-绿方式验证过它有效：把那段判断注掉，检查立刻失败。
+
+## 跨网联机（2026-09-26 调研，未在真机上验证）
+
+- **ENet 客户端支持域名**（实测）：`--join github.com` 解析成功——解析失败时 `create_client`
+  会立刻返回错误并打印「无法连接」，实测没有出现，而是进入了等待连接的状态；
+  另一次 `--join localhost` 一次连上并收到本机角色。因此域名可以直接填进界面的手动连接框。
+- **Cloudflare 上必须设 DNS only（灰色云朵）**。橙色云朵的代理解析返回的是 Cloudflare 边缘 IP，
+  且它只转发 HTTP/HTTPS 的特定 TCP 端口（80/8080/8880/2052/2082/2086/2095/443/2053/2083/2087/2096/8443），
+  **完全不转发 UDP**。ENet 走 UDP，开代理必然连不上。
+- **Cloudflare Tunnel 不支持 UDP**（只有 HTTP/HTTPS/TCP/SSH/RDP/UNIX socket），
+  Spectrum 才支持任意 TCP/UDP，但那是企业版付费功能。所以不要指望隧道解决这件事。
+- 服务器在大陆机房时，用域名指向游戏 UDP 端口实践上不触发备案；但同一个域名若解析到
+  80/443 提供网站就需要备案。要完全规避就选境外或香港节点（延迟高一档）。
+- 云服务器上 `IP.get_local_addresses()` 拿到的是 VPC 私网地址，公网 IP 是 NAT 映射的，
+  网卡上没有。因此 HUD 里的「请对方填这个地址」在云服务器上没有意义
+  （无头运行时本来就不显示 HUD，所以平时不受影响）。
+- 未做：`--advertise <地址>` 之类让服务端日志直接打出对外地址的参数。
 
 ## 冒烟测试（`tools/net-smoke.mjs`）
 

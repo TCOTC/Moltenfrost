@@ -7,6 +7,10 @@ build/macos/*
 !build/windows/.gitkeep
 !build/macos/.gitkeep
 
+# 服务端部署的中间产物（Godot 的 Linux 二进制约 75 MiB、仓库 bundle），全部由
+# tools/deploy-server.mjs 生成，不入库。
+build/server/
+
 # 签名与公证材料，绝对不要提交
 certs/
 *.p12

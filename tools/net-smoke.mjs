@@ -245,6 +245,28 @@ async function main() {
   });
   assertions.push(`初始界面接线正确（${menuChecks} 项断言）`);
 
+  // 连一个没有服务端的地址。ENet 建客户端是即时的，要等超时才报 connection_failed，
+  // 这段"正在连接"的窗口里若往尚未连接的 peer 发 RPC，引擎会每秒刷一条错误。
+  // 界面上填错地址是最常见的失败方式，所以这一段要有覆盖。
+  const orphanPort = opts.port + 1;
+  const orphan = launch(
+    godot,
+    [...base, "--join", "127.0.0.1", "--port", String(orphanPort)],
+    "连不上的客户端",
+    opts,
+  );
+  try {
+    await waitFor(orphan, "[session] 启动参数", timeoutMs);
+    // 跨过至少一个时延探测周期（1 秒）。
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    if (orphan.text.includes("not connected")) {
+      throw new Error("往尚未连接的 peer 发 RPC 会刷引擎错误，日志里出现了「not connected」");
+    }
+  } finally {
+    stop(orphan);
+  }
+  assertions.push("连接尚未建立时不刷 RPC 错误");
+
   // 会话生命周期：创建房间 → 回到初始界面 → 再创建房间。
   // 这一项以场景为入口，因为 `--script` 运行时不注册自动加载单例。
   const sessionChecks = runScriptTest(godot, opts, {

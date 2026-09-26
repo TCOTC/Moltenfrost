@@ -20,6 +20,10 @@ const Discovery := preload("res://scripts/net/lan_discovery.gd")
 ## 自检用的隔离取值，避免与正常运行时互相影响。
 const TEST_ROOM_NAME := "自检房间"
 const TEST_ROOM_PORT := 27199
+## 自检用的探测端口，避开默认的 27016：开发时编辑器里运行的实例也停在初始界面、
+## 也绑定那个端口，用它就会以「无法监听」失败，而那行错误看起来像探测功能坏了。
+## 三个自检脚本串行执行，因此共用这一个值不会冲突。
+const TEST_DISCOVERY_PORT := 27119
 ## 房间超时取小一点，让这个检查不必真等三秒。它比广播间隔短没关系——
 ## 这里只验证"没有广播就会过期"，而这一路是在停掉广播之后才计的。
 const TEST_ROOM_TTL := 1.0
@@ -80,6 +84,7 @@ func _process(delta: float) -> bool:
 # ---------------------------------------------------------------- 步骤
 
 func _start_sockets() -> void:
+	Discovery.discovery_port = TEST_DISCOVERY_PORT
 	_listener = Discovery.new()
 	_listener.room_ttl = TEST_ROOM_TTL
 	_listener.rooms_changed.connect(_on_rooms_changed)

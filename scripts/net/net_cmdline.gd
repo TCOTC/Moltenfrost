@@ -28,6 +28,16 @@ static func parse(args: PackedStringArray) -> Dictionary:
 		match args[i]:
 			"--host":
 				opts["host"] = true
+			"--advertise":
+				# 告诉主机"对方该填哪个地址"。局域网内自动探测已经够用，这个参数是给
+				# 跨网与云服务器用的：那些机器上 IP.get_local_addresses() 拿到的是 VPC 私网址
+				# （形如 172.16.x.x），对外没有意义，而网卡上也拿不到公网地址（那是 NAT 映射的）。
+				var advertise := _value_at(args, i + 1)
+				if advertise.is_empty():
+					push_error("--advertise 后面需要接一个地址或域名，例如 --advertise mf.example.com")
+				else:
+					opts["advertise"] = advertise
+					i += 1
 			"--join":
 				var address := _value_at(args, i + 1)
 				if address.is_empty():
