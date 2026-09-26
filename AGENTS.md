@@ -10,6 +10,12 @@
 - 决策与理由写 `docs/`；机制与坑写代码注释里（就近）；这里只写结论。
 - **`memory/` 由 AI 自行维护**：记什么、记在哪一个文件、什么时候更新，都由 AI 判断后直接写入，**不需要人指定或确认**。人只需在发现某条不对时说改哪一条。
 
+## 分支
+
+直接在 **`main`** 上提交，不另开功能分支。`main` 就是 2D 横版这条线。
+仓库里另有 `feature/element-coop-mechanics`（已停用的 3D 第一人称线）与 `backup/pre-squash`（本地备份），
+详情见 `memory/git-workflow.md`。
+
 ## 环境
 
 - Godot 4.7.2：`D:\Tool\Godot\4.7.2\Godot_v4.7.2-stable_win64_console.exe`
