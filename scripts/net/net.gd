@@ -50,6 +50,12 @@ const PING_MAX_IN_FLIGHT := 16
 ## 取值要能容忍偶发丢包（5 秒相当于容忍连续 4 次丢失），也要明显短于 ENet 的等待。
 const HEARTBEAT_TIMEOUT := 5.0
 
+## 退出时让断开通知送达而做的 poll 轮数与间隔（毫秒）。
+## 见 shutdown_gracefully() 的说明：只 poll 一次在公网下不够，因为那个包也可能丢，
+## 而进程随后就退出、没有重传机会。240 毫秒相对 systemd 的 TimeoutStopSec 可以忽略。
+const SHUTDOWN_POLL_ROUNDS := 6
+const SHUTDOWN_POLL_GAP_MS := 40
+
 var _ping_elapsed: float = 0.0
 var _ping_seq: int = 0
 ## 序号 → 发出时的本地毫秒时刻。
@@ -233,22 +239,29 @@ func _finish_session(reason: String) -> void:
 
 ## 结束会话，并尽量让对端立刻知道。由 main.gd 在退出时调用。
 ##
-## **关键是 close() 之前先 poll() 一次。** 引擎平日每帧替我们 poll，
+## 重点是 `close()` 之前**多 poll 几轮**。引擎平日每帧替我们 poll，
 ## 而调用这个方法时进程即将结束、不会再有任何一帧；不主动 poll 的话，
 ## ENet 要发的断开通知只会留在发送队列里随进程一起消失。
-## 2026-09-26 实测过这个差别：不 poll 时客户端要等心跳超时（5 秒）才发现，
-## 加一行 poll() 之后明显提前（公网含 SSH 开销在内约 3 秒，而心跳阈值是 5 秒）。
+## 2026-09-26 实测过三种做法：
 ##
-## 曾经额外加过一个 reliable 的 goodbye RPC 来"主动告知"，但**实测是多余的**：
-## close() 发的 ENet 断开通知会先到，客户端转成 OFFLINE 状态之后，
-## 随后的 goodbye 被 _finish_session 的去重逻辑当作重复而忽略。
-## 它还带来一个副作用：poll() 会处理此刻收到的同步数据，而节点正在退树，
-## 于是触发 `Ignoring sync data from non-authority or for missing node`。
-## 去掉 RPC 之后路径更短，也不需要额外的消息类型。
+##   什么都不做            客户端等**心跳超时**（5 秒）——这是最初的状况
+##   只 poll 一次          局域网下几乎即时（0.0 秒），**公网下仍要等 5 秒**
+##   连 poll 几轮并留出间隔  见下（给 ENet 重传的机会）
+##
+## 只 poll 一次不够，是因为 UDP 上这个包也可能丢；进程随后就退出了，
+## 没有下一次重传的机会。这里的 200 毫秒是留给重传的窗口，
+## 与 systemd 的 TimeoutStopSec（15 秒）相比可以忽略。
+##
+## 曾经额外加过一个 reliable 的 goodbye RPC 来"主动告知"，实测是多余的：
+## ENet 自己的断开通知会先到，客户端转成 OFFLINE 之后，goodbye 被去重逻辑忽略。
+## 它还带来副作用——poll() 会处理此刻收到的同步数据，而节点正在退树，
+## 触发 `Ignoring sync data from non-authority or for missing node`。
 func shutdown_gracefully() -> void:
 	if role == Role.OFFLINE or not multiplayer.has_multiplayer_peer():
 		return
-	multiplayer.poll()
+	for i in SHUTDOWN_POLL_ROUNDS:
+		multiplayer.poll()
+		OS.delay_msec(SHUTDOWN_POLL_GAP_MS)
 	close()
 
 
