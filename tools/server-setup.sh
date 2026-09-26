@@ -205,6 +205,14 @@ ExecStart=${GODOT_BIN} --headless --path ${REPO_DIR} -- --host --port %i${advert
 # 因此不需要额外的恢复逻辑，重连即可。
 Restart=always
 RestartSec=2
+# 停止时的行为。默认就是 SIGTERM，这里写出来是为了让意图可见：
+# Godot 收到 SIGTERM 后会走正常的退出流程，`main.gd` 的 _exit_tree 因此能跑到、
+# 可以由服务端主动向客户端发断开通知（客户端因此不必等超时）。实测 0.4 秒内完成。
+KillSignal=SIGTERM
+# 上限取 15 秒而不是默认的 90 秒：正常退出只要不到一秒，真卡住了也不该让
+# 关机/重启干等一分半。超时之后 systemd 会发 SIGKILL，此时客户端的
+# 心跳判定负责发现服务端下线。
+TimeoutStopSec=15
 # 日志走 journald，用 journalctl -u moltenfrost@27015 -f 看。
 StandardOutput=journal
 StandardError=journal
