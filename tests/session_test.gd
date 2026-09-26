@@ -24,6 +24,10 @@ const Discovery := preload("res://scripts/net/lan_discovery.gd")
 ## 自检取值，避开开发时常用的 27015。
 const GAME_PORT := 27123
 const ROOM_NAME := "会话自检房间"
+## 自检用的探测端口。开发时编辑器里运行的实例也停在初始界面、也绑定默认的那个端口，
+## 不换端口就会因「无法监听」失败。
+## 必须在本测试与入口脚本实例化之前写定：两者都用这个静态变量。
+const TEST_DISCOVERY_PORT := 27119
 const WAIT_LIMIT := 4.0
 
 const STAGE_LOAD := 0
@@ -42,6 +46,8 @@ var _stage_elapsed: float = 0.0
 
 
 func _ready() -> void:
+	Discovery.discovery_port = TEST_DISCOVERY_PORT
+	_case_cmdline()
 	_main = MAIN_SCENE.instantiate()
 	add_child(_main)
 	_listener = Discovery.new()
@@ -73,6 +79,21 @@ func _process(delta: float) -> void:
 
 
 # ---------------------------------------------------------------- 步骤
+
+## 命令行参数的解析。这部分是纯函数，因此不依赖网络，放在最前面先跑。
+## 重点覆盖 `--advertise`：它的取值是跨网联机时唯一能把地址告诉对方的东西，
+## 而云服务器上自动探测到的只有 VPC 私网地址（172.16.x.x），对外没有意义。
+## 参数漏登记进白名单的现象是"参数没生效"而不是报错（引擎会静默忽略未知参数），
+## 所以这里断言的是它确实被解析出来了。
+func _case_cmdline() -> void:
+	var opts := NetCmdline.parse(PackedStringArray(["--host", "--advertise", "mf.example.com", "--port", "27015"]))
+	_ok(bool(opts.get("host", false)), "--host 应当被解析")
+	_ok(String(opts.get("advertise", "")) == "mf.example.com", "--advertise 的取值应当被解析，实际「%s」" % opts.get("advertise", ""))
+	_ok(int(opts.get("port", 0)) == 27015, "--port 应当被解析")
+	# 取值缺失时不应写进结果，否则 main.gd 会拿到一个空地址并据此打印错误提示。
+	var missing := NetCmdline.parse(PackedStringArray(["--advertise"]))
+	_ok(not missing.has("advertise"), "--advertise 缺少取值时不应被解析")
+
 
 func _case_host() -> void:
 	# 回到初始界面这一步在无头下只是结束会话。角色节点走的是延迟释放，因此要下一帧才看不到。

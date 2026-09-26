@@ -65,8 +65,16 @@ func _process(delta: float) -> void:
 
 ## 向所有已知 peer 发一次时延探测。用不可靠传输：
 ## 重传会把等待时间算进往返时延，测出来的就不是链路时延了。
+##
+## 客户端要等到**连接已建立**才发：`join()` 一返回 role 就是 CLIENT，而 ENet 建客户端是即时的，
+## 真正的连接结果要等 connection_failed 或超时（实测约 32 秒），这段窗口里 rpc_id 会报
+## `Trying to call an RPC via a multiplayer peer which is not connected`，每秒两条地刷。
+## 从初始界面加入一个填错的地址是最常见的失败方式，所以这个窗口不能不管。
+## 服务端侧不需要这个判断：没有 peer 时 `get_peers()` 是空列表，循环本身不执行。
 func _ping_peers() -> void:
 	if not multiplayer.has_multiplayer_peer():
+		return
+	if role == Role.CLIENT and not is_connected_to_server():
 		return
 	_ping_seq += 1
 	var seq := _ping_seq
@@ -103,6 +111,18 @@ func pong(seq: int, sent_msec: int) -> void:
 ## 于是无法区分"还没开始会话"与"正在监听"。
 func is_server() -> bool:
 	return role != Role.CLIENT
+
+
+## 作为客户端时，与主机的连接是否已经建立。
+## `join()` 一返回 role 就是 CLIENT，而 ENet 创建客户端是即时的：真正的连接结果要等
+## connection_failed 或超时（实测约 32 秒）。这段窗口里 peer 已经设好但并不可用，
+## 往它上面发 RPC 会报「not connected」并刷屏（见 _ping_peers 的说明），
+## 所以需要这个判断把"已连接"与"正在连接"分开。
+## 本机是服务端、或尚未开始会话时恒为 false，因此调用方要先看 role。
+func is_connected_to_server() -> bool:
+	if _peer == null or role != Role.CLIENT:
+		return false
+	return _peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
 
 
 ## 本机是否为专用服务端，也就是本机没有玩家角色。

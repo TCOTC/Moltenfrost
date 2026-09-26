@@ -9,9 +9,20 @@ extends CanvasLayer
 ##
 ## 房间列表来自 scripts/net/lan_discovery.gd：主机每秒广播一次，
 ## 本界面按报文里的进程标识与游戏端口去重，`room_ttl` 秒收不到同一个房间的广播就把它移除。
+##
+## 除了探测到的房间，列表最前面还有一个**固定条目：官方公网服务端**。
+## 它的存在有两个理由：跨网联机时局域网探测本来就收不到对方的广播（受限广播只走默认路由那张网卡），
+## 而玩家也不该为了连官方服务器去手输一遍域名。
 
 signal host_requested(room_name: String, port: int)
 signal join_requested(address: String, port: int)
+
+## 官方服务端的域名。它指向一台按量计费的云服务器，重建实例会让公网地址变，
+## 但域名不变，因此这里写域名而不是 IP。换服务器时只改这一行。
+## 新加的实例要同步放行 UDP 端口，否则会以连接超时的形式失败（详见 memory/networking.md）。
+const OFFICIAL_HOST := "moltenfrost-server.mytemos.com"
+## 固定条目在列表里的显示名。带"官方"二字是为了与探测到的玩家房间区分开。
+const OFFICIAL_NAME := "官方房间（公网）"
 
 const MIN_PORT := 1
 const MAX_PORT := 65535
@@ -137,13 +148,14 @@ func _begin_join(address: String, port: int) -> void:
 # ---------------------------------------------------------------- 列表
 
 func _on_rooms_changed(listed: Array) -> void:
+	var merged := _merge_rooms(listed)
 	# 重建列表时必须把选中项还原：列表每秒可能刷新一次，
 	# 每次都清空选择的话，玩家刚点中的房间会在下一帧自己取消。
 	var keep := String(_selected.get("key", ""))
 	_rooms.clear()
 	_selected = {}
 	var reselect := -1
-	for room in listed:
+	for room in merged:
 		var index := _rooms.add_item(_room_label(room))
 		_rooms.set_item_metadata(index, room)
 		if String(room.get("key", "")) == keep:
@@ -155,15 +167,60 @@ func _on_rooms_changed(listed: Array) -> void:
 	if _busy:
 		# 连接进行中：状态栏留给"正在连接…"，不被列表刷新覆盖。
 		return
-	if listed.is_empty():
-		_set_status("还没有探测到房间。可以自己创建房间，也可以在下面手动填写主机的地址与端口。")
+	var found := listed.size()
+	if found == 0:
+		_set_status("局域网里没有探测到房间，但官方房间随时可加入（选中它再点加入）。也可以自己创建一个房间。")
 	else:
-		_set_status("发现 %d 个房间（每秒刷新，%d 秒没有广播的会被移除）。" % [
-			listed.size(), int(_discovery.room_ttl),
+		_set_status("局域网中发现 %d 个房间，加上官方房间共 %d 个（每秒刷新，%d 秒没有广播的会被移除）。" % [
+			found, merged.size(), int(_discovery.room_ttl),
 		])
 
 
+## 固定条目与探测到的房间合成一份列表：固定条目在前，探测到的在后。
+## 同地址同端口的探测结果会被去掉，否则同一台服务器会在列表里出现两次——
+## 调试时把 OFFICIAL_HOST 临时改成本机的局域网地址就会遇到那种情况。
+func _merge_rooms(discovered: Array) -> Array:
+	var merged: Array = _builtin_rooms()
+	var taken: Dictionary = {}
+	for room in merged:
+		taken[_address_key(room)] = true
+	for room in discovered:
+		var key := _address_key(room)
+		if taken.has(key):
+			continue
+		taken[key] = true
+		merged.append(room)
+	return merged
+
+
+## 固定条目。形状与探测到的房间一致，因此列表重建、选中、加入都不用分两条路径。
+## 端口取 Net.DEFAULT_PORT 而不是写常量：它本来就是默认游戏端口，
+## 而写成运行期取值可以避免与那个默认值分叉（`const` 里不能引用自动加载的常量）。
+func _builtin_rooms() -> Array:
+	return [{
+		"key": "official:%s:%d" % [OFFICIAL_HOST, Net.DEFAULT_PORT],
+		"name": OFFICIAL_NAME,
+		"address": OFFICIAL_HOST,
+		"port": Net.DEFAULT_PORT,
+		"official": true,
+	}]
+
+
+## 去重用的键。固定条目用域名，探测到的用 IP，两者不会撞；
+## 真正会撞的情形是固定条目被临时指向一个局域网地址。
+func _address_key(room: Dictionary) -> String:
+	return "%s:%d" % [String(room.get("address", "")), int(room.get("port", 0))]
+
+
 func _room_label(room: Dictionary) -> String:
+	# 官方房间的人数无从得知（没有连上去就不存在这份信息），所以不显示人数而显示"公网"。
+	# 给它编个数字反而会让人以为那是真的。
+	if bool(room.get("official", false)):
+		return "%s    %s:%d    公网" % [
+			String(room.get("name", "官方房间")),
+			String(room.get("address", "?")),
+			int(room.get("port", 0)),
+		]
 	return "%s    %s:%d    %d 人" % [
 		String(room.get("name", "房间")),
 		String(room.get("address", "?")),
@@ -189,7 +246,9 @@ func _start_probing() -> void:
 	if _discovery.listen_for_rooms():
 		_set_status("正在探测局域网中的房间…")
 	else:
-		_set_status("UDP %d 无法监听，自动探测不可用。请手动填写主机的地址与端口；若同一台机器上已有另一个实例在探测，先把它关掉。" % LanDiscovery.DISCOVERY_PORT)
+		# 探测端口被占用只影响局域网列表。官方房间在列表里是固定条目、不经探测，
+		# 因此这种情况仍然能加入官方服务器，要把这一点说清楚。
+		_set_status("UDP %d 无法监听，局域网自动探测不可用，但仍可加入上面的官方房间或手动填写地址。若同一台机器上已有另一个实例停在初始界面，它会占用这个端口。" % LanDiscovery.discovery_port)
 
 
 ## 读端口输入框。不合法时把提示写到状态栏并返回 0（0 不是合法端口，可当失败标记）。
