@@ -1,4 +1,4 @@
-extends Node3D
+extends Node2D
 ## 工程入口：决定本机在本次会话里的角色，并把状态显示在 HUD 上。
 ##
 ## 角色判定（参数解析见 scripts/net/net_cmdline.gd）：
@@ -16,13 +16,17 @@ extends Node3D
 
 const MODE_SETTING := "display/window/size/mode"
 const PLAYER_SCENE := preload("res://scenes/player.tscn")
-## 生成位置沿一个圆均匀分布。槽位由服务端分配，因此不会出现两人重叠在同一个点。
+## 生成位置沿地面横向等距错开。槽位由服务端分配，因此不会出现两人重叠在同一个点。
+## 2D 只有一条地面线，所以是一维排布；间距取 96 px（角色宽 48 px，相当于留出一个身位）。
 const SPAWN_SLOTS := 6
-const SPAWN_RADIUS := 4.0
+const SPAWN_SPACING := 96.0
+## 出生高度。地面顶面在 y=0、角色半高 48，因此 -70 让角色开局位于离地 22 px 处然后自然落到地面，
+## 而不是与地面重叠后再被推出来（那会在第一帧产生一次假的位移尖峰，混进平滑诊断里）。
+const SPAWN_HEIGHT := -70.0
 ## --net-stats 的输出间隔。
 const STATS_INTERVAL := 2.0
 
-@onready var _players: Node3D = $Players
+@onready var _players: Node2D = $Players
 @onready var _spawner: MultiplayerSpawner = $Players/Spawner
 @onready var _status: Label = $HUD/Status
 
@@ -59,6 +63,11 @@ func _start_session() -> void:
 	var opts := NetCmdline.from_process()
 	_port = int(opts.get("port", Net.DEFAULT_PORT))
 	_stats_enabled = opts.has("net_stats")
+	# 手感数值可临时覆盖，便于不动代码地扫参。不给参数时取脚本里的默认值，
+	# 因此这里只是把命令行值写回同一个静态变量；推算式见 player.gd 里各自的注释。
+	Player.move_speed = float(opts.get("move_speed", Player.move_speed))
+	Player.jump_velocity = float(opts.get("jump_velocity", Player.jump_velocity))
+	Player.gravity = float(opts.get("gravity", Player.gravity))
 	# 显示水位可临时覆盖，用于对照（默认由 RemoteInterpolator 按链路自适应）。
 	Player.interp_buffer = float(opts.get("interp_buffer", 0.0))
 	# 物理帧率决定位置更新的粒度，因此也是同步流"信息率"的上限：
@@ -71,6 +80,7 @@ func _start_session() -> void:
 	Player.autopilot_stop = opts.has("autopilot_stop")
 	# 把生效的启动参数写进日志，便于对照两台机器上分别启动了什么。
 	print("[session] 启动参数：%s" % opts)
+	_report_feel()
 
 	if opts.has("join"):
 		var address := String(opts["join"])
@@ -87,6 +97,25 @@ func _start_session() -> void:
 	# 本机是否为玩家只取决于运行模式，与它是权威节点这一点无关。
 	if not dedicated:
 		_spawn_player(Net.local_id())
+
+
+## 把生效的手感数值与由它们推出的量打进日志。
+## 存在的理由是扫参：`--move-speed` 之类的覆盖若不生效（例如没登记白名单），
+## 现象只是"感觉没变"，而这一行会直接显示实际生效的值。
+## 数值本身是**解析值**，与实测有约一成的差距，原因见 player.gd 里 gravity 的注释：
+## 半隐式欧拉每步先加一次重力再位移，实测会跳得更高、滞空更久、因而跳得更远。
+## 因此设计关卡沟宽时要留出那一成余量，不要直接拿这一行的跨度当成能跳过的距离。
+func _report_feel() -> void:
+	var dt := 1.0 / float(maxi(1, Engine.physics_ticks_per_second))
+	var height := Player.jump_velocity * Player.jump_velocity / (2.0 * Player.gravity)
+	var height_measured := height + Player.jump_velocity * dt * 0.5
+	var airtime := 2.0 * Player.jump_velocity / Player.gravity
+	print("[feel] 移动=%.0f px/s（%.2f 格/秒）  起跳=%.0f px/s  重力=%.0f px/s²  跳跃高度 解析 %.0f / 实测约 %.0f px（%.2f 格）  滞空 解析 %.2f s  一个跳跃跨 解析约 %.0f px（实测高约一成）" % [
+		Player.move_speed, Player.move_speed / 64.0,
+		Player.jump_velocity, Player.gravity,
+		height, height_measured, height_measured / 64.0,
+		airtime, Player.move_speed * airtime,
+	])
 
 
 # ---------------------------------------------------------------- 玩家名单
@@ -146,9 +175,9 @@ func _allocate_slot(id: int) -> int:
 	return slot
 
 
-func _slot_position(slot: int) -> Vector3:
-	var angle := TAU * float(slot) / float(SPAWN_SLOTS)
-	return Vector3(sin(angle) * SPAWN_RADIUS, 1.0, cos(angle) * SPAWN_RADIUS)
+func _slot_position(slot: int) -> Vector2:
+	var offset := (float(slot) - (float(SPAWN_SLOTS) - 1.0) * 0.5) * SPAWN_SPACING
+	return Vector2(offset, SPAWN_HEIGHT)
 
 
 func _peer_node_name(id: int) -> String:
@@ -164,8 +193,9 @@ func _peer_node_name(id: int) -> String:
 ##     本机 17 ms 而远端 100 ms → 空档在链路（无线链路的省电投递很可能）；
 ##     本机自己也是 100 ms → 是我这台的帧或物理在卡，与网络无关
 ##   停顿 不为 0 → 缓冲被追平、显示在等新数据（对端静止时不计数，那种保持无意义）
-##   最大单帧位移 是"跳一下"的直接计量：角色以 6 m/s 移动、120 帧显示时，
-##     平滑运动应只有 0.05 m；若到 0.5 m 量级，就是那一帧把积攒的运动量一次走完了。
+##   最大单帧位移 是"跳一下"的直接计量：平滑运动每帧只应前进
+##     Player.move_speed ÷ 显示帧率（480 px/s、120 帧时是 4 px）；
+##     若到 40 px 量级，就是那一帧把积攒的运动量一次走完了。
 ##     它自带"当时"的上下文（滞后、钟速、是否在保持、距上次新位置多久），
 ##     直接指向前四轮各自定位到的那几类成因。
 ##   缓冲 远大于目标 → 滞后偏大，钟速会把它消耗掉
@@ -235,7 +265,7 @@ func _report_player(player: Player) -> void:
 		# 本机角色报的是"发送方基准"：我实际多久产生一个新位置。
 		# 与远端角色的"最大到达间隔"对照，就能判断空档产生在链路还是在我这边。
 		var change_rate := float(stats["change_count"]) / STATS_INTERVAL
-		print("[net-stats]   本机 peer=%d 位置更新=%.1f 次/秒  最大间隔=%.0f ms  显示移动=%.2f m（发送方基准）" % [
+		print("[net-stats]   本机 peer=%d 位置更新=%.1f 次/秒  最大间隔=%.0f ms  显示移动=%.0f px（发送方基准）" % [
 			player.peer_id, change_rate, stats["change_gap_max_ms"], stats["moved"],
 		])
 		return
@@ -247,7 +277,7 @@ func _report_player(player: Player) -> void:
 	var disp_dips := "0"
 	if int(stats["disp_dips"]) > 0:
 		disp_dips = "%d 次/最大 %.2f m" % [stats["disp_dips"], stats["disp_dip_max"]]
-	print("[net-stats]   远端 peer=%d 每秒到达=%.1f 次  最大到达间隔=%.0f ms  重复=%.0f%%  停顿=%.0f%%  缓冲=%.0f/%.0f ms（基准 %.0f + 补偿 %.0f）  最大连续间隔=%.0f ms  钟速=%.2f×  最大单帧位移=%s  显示移动=%.2f m  收到回拉=%s  显示回拉=%s" % [
+	print("[net-stats]   远端 peer=%d 每秒到达=%.1f 次  最大到达间隔=%.0f ms  重复=%.0f%%  停顿=%.0f%%  缓冲=%.0f/%.0f ms（基准 %.0f + 补偿 %.0f）  最大连续间隔=%.0f ms  钟速=%.2f×  最大单帧位移=%s  显示移动=%.0f px  收到回拉=%s  显示回拉=%s" % [
 		player.peer_id, per_second, stats["max_gap_ms"],
 		float(stats["duplicated_ratio"]) * 100.0,
 		float(stats["hold_ratio"]) * 100.0,
@@ -301,7 +331,7 @@ func _refresh_status() -> void:
 		_:
 			lines.append("角色：尚未开始会话")
 	lines.append("本机 peer id：%d    其他 peer：%s" % [Net.local_id(), _describe_peers()])
-	lines.append("操作：WASD 移动，空格跳跃")
+	lines.append("操作：A/D 移动，空格跳跃")
 	if not _notice.is_empty():
 		lines.append(_notice)
 	_status.text = "\n".join(lines)

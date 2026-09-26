@@ -11,10 +11,11 @@ extends RefCounted
 ## 判据（需要往后看一步，因此在看到再下一步时才判定上一步）：
 ##   把三步位移记作 a、b、c（a 最早）。若 b 与 a 的方向相反（倒退），
 ##   且 c 与 a 的方向相同（又回到原方向），则 b 是一次回拉；
-##   回拉量取 b 在 -a 方向上的投影（米）。
+##   回拉量取 b 在 -a 方向上的投影（像素）。
 ## 掉头不满足第二条（c 会继续沿 b 的方向），因此不会被计入。
 ##
 ## 长度为 0 的位移（重复快照、或角色停在原地）不参与判定，也不会打断参考方向。
+## 状态是 Vector2（2D 版）；判定只用到方向与投影，与维度无关。
 
 ## 判定方向是否相反：点积小于该值即视为相反。取负的极小量，避免数值噪声。
 const OPPOSITE_EPS := 0.0
@@ -26,13 +27,13 @@ var max_dip: float = 0.0
 
 var _started: bool = false
 var _has_first: bool = false
-var _last: Vector3 = Vector3.ZERO
-var _first: Vector3 = Vector3.ZERO
-var _second: Vector3 = Vector3.ZERO
+var _last: Vector2 = Vector2.ZERO
+var _first: Vector2 = Vector2.ZERO
+var _second: Vector2 = Vector2.ZERO
 
 
 ## 送入一个位置采样（按时间顺序）。位置未变时不会影响判定。
-func add(position: Vector3) -> void:
+func add(position: Vector2) -> void:
 	if not _started:
 		_last = position
 		_started = true

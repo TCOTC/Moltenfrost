@@ -1,6 +1,6 @@
 # Moltenfrost · 项目上下文
 
-《熔霜》—— 3D 双人元素协同解谜。桌面端专用，双人是**多台设备联机**，不做单机同屏。
+《熔霜》—— 2D 横版双人元素协同解谜。桌面端专用，双人是**多台设备联机**，不做单机同屏。
 完整决策依据在 `docs/`，本文件只保留"动手前不知道就会白干"的部分。
 
 ## 关于本文件
@@ -15,6 +15,8 @@
 - Godot 4.7.2：`D:\Tool\Godot\4.7.2\Godot_v4.7.2-stable_win64_console.exe`
 - 目标平台：Windows（x86_64）与 macOS（产物是 Universal 2，但**只支持 Apple Silicon**）；不做网页版与移动端
 - 导出模板：`node tools/setup-dev-env.mjs --check` 看是否齐全，缺了就跑一次同名命令（不带 `--check`）
+- 工程内的距离与速度单位是**像素**，关卡以 64 px 为一方格（3D 版的“米”已废弃）。不要引入米与像素的换算层：多一层就多一次漏乘，而漏乘的后果是跳跃高度差几十倍。
+- 手感数值（水平速度、起跳初速、重力）是 `scripts/player.gd` 里的三个 `static var`，可用 `--move-speed` / `--jump-velocity` / `--gravity` 临时覆盖以便扫参；启动日志的 `[feel]` 行给出生效值与推出的跳跃高度与滞空。那一行是**解析值，实测高约一成**（半隐式欧拉），**关卡沟宽要按实测值算**。
 
 ## 两台机器各导自己的平台
 
@@ -25,8 +27,8 @@
 
 ## 五条硬约束
 
-1. **渲染器用 Forward+**（桌面专用），不要引入按平台分流的兼容处理。
-2. **物理引擎必须显式选 Jolt**：默认值 `DEFAULT` 等价于 GodotPhysics3D，不显式选就等于没用上。
+1. **渲染器用 Forward+**（桌面专用，2D 场景同样走它），不要引入按平台分流的兼容处理。
+2. **2D 侧没有第二套物理后端**：`physics/2d/physics_engine` 只有 `GodotPhysics2D`（外加关闭物理的 `Dummy`），Jolt 只服务 3D，因此原“必须显式选 Jolt”这条只对 3D 成立。代价是堆叠与旋转平台的求解稳定性弱于 Jolt，依赖堆叠的关卡要先做原型验证。
 3. **联机是多台设备**：ENet 主机/加入者模式；不做单机同屏，因此不需要处理"两人共用一套输入与一台相机"。
 4. **开发期窗口化靠特性标签覆盖**：`project.godot` 里 `window/size/mode=3`（全屏）配 `window/size/mode.editor=0`（开发窗口）。读这个设置要用 `ProjectSettings.get_setting_with_override()`，普通 `get_setting()` 拿不到覆盖值；不要写死全屏。
 5. **第三方库许可**：MIT / BSD / Apache-2.0 / Zlib / CC0 / Unlicense 可用；LGPL 谨慎；GPL / AGPL 禁用；CC-BY-NC* 只能用于原型期。引入时登记到 `THIRD_PARTY.md`。

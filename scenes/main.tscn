@@ -1,59 +1,60 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 
-[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
-sky_top_color = Color(0.29, 0.36, 0.45, 1)
-sky_horizon_color = Color(0.63, 0.65, 0.68, 1)
-ground_bottom_color = Color(0.16, 0.16, 0.18, 1)
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
+size = Vector2(1600, 64)
 
-[sub_resource type="Sky" id="Sky_1"]
-sky_material = SubResource("ProceduralSkyMaterial_1")
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_step"]
+size = Vector2(256, 64)
 
-[sub_resource type="Environment" id="Environment_1"]
-background_mode = 2
-sky = SubResource("Sky_1")
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_wall"]
+size = Vector2(64, 512)
 
-[sub_resource type="BoxMesh" id="BoxMesh_1"]
-size = Vector3(20, 0.5, 20)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_1"]
-size = Vector3(20, 0.5, 20)
-
-[sub_resource type="BoxMesh" id="BoxMesh_step"]
-size = Vector3(4, 1, 4)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_step"]
-size = Vector3(4, 1, 4)
-
-[node name="Main" type="Node3D"]
+[node name="Main" type="Node2D"]
 script = ExtResource("1_main")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
-environment = SubResource("Environment_1")
+[node name="Ground" type="StaticBody2D" parent="."]
+position = Vector2(0, 32)
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0.5, -0.866025, 0, 0.866025, 0.5, 0, 10, 0)
-shadow_enabled = true
+[node name="Collision" type="CollisionShape2D" parent="Ground"]
+shape = SubResource("RectangleShape2D_ground")
 
-[node name="Ground" type="StaticBody3D" parent="."]
+[node name="Visual" type="Polygon2D" parent="Ground"]
+color = Color(0.22, 0.23, 0.27, 1)
+polygon = PackedVector2Array(-800, -32, 800, -32, 800, 32, -800, 32)
 
-[node name="Mesh" type="MeshInstance3D" parent="Ground"]
-mesh = SubResource("BoxMesh_1")
+[node name="Step" type="StaticBody2D" parent="."]
+position = Vector2(-560, -32)
 
-[node name="Collision" type="CollisionShape3D" parent="Ground"]
-shape = SubResource("BoxShape3D_1")
+[node name="Collision" type="CollisionShape2D" parent="Step"]
+shape = SubResource("RectangleShape2D_step")
 
-[node name="Step" type="StaticBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0.75, -3)
+[node name="Visual" type="Polygon2D" parent="Step"]
+color = Color(0.3, 0.31, 0.36, 1)
+polygon = PackedVector2Array(-128, -32, 128, -32, 128, 32, -128, 32)
 
-[node name="Mesh" type="MeshInstance3D" parent="Step"]
-mesh = SubResource("BoxMesh_step")
+[node name="WallLeft" type="StaticBody2D" parent="."]
+position = Vector2(-832, -256)
 
-[node name="Collision" type="CollisionShape3D" parent="Step"]
-shape = SubResource("BoxShape3D_step")
+[node name="Collision" type="CollisionShape2D" parent="WallLeft"]
+shape = SubResource("RectangleShape2D_wall")
 
-[node name="Players" type="Node3D" parent="."]
+[node name="Visual" type="Polygon2D" parent="WallLeft"]
+color = Color(0.3, 0.31, 0.36, 1)
+polygon = PackedVector2Array(-32, -256, 32, -256, 32, 256, -32, 256)
+
+[node name="WallRight" type="StaticBody2D" parent="."]
+position = Vector2(832, -256)
+
+[node name="Collision" type="CollisionShape2D" parent="WallRight"]
+shape = SubResource("RectangleShape2D_wall")
+
+[node name="Visual" type="Polygon2D" parent="WallRight"]
+color = Color(0.3, 0.31, 0.36, 1)
+polygon = PackedVector2Array(-32, -256, 32, -256, 32, 256, -32, 256)
+
+[node name="Players" type="Node2D" parent="."]
 
 [node name="Spawner" type="MultiplayerSpawner" parent="Players"]
 spawn_path = NodePath("..")

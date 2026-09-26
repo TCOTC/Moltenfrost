@@ -62,8 +62,34 @@ static func parse(args: PackedStringArray) -> Dictionary:
 				else:
 					opts["physics_hz"] = int(hz_raw)
 					i += 1
+			# 下面三个是手感数值的临时覆盖，用于不动代码地在一个会话里扫参。
+			# 默认值在 scripts/player.gd 的静态变量处，那里写了推算式。
+			"--move-speed":
+				var speed_raw := _positive_float(args, i + 1, "--move-speed", "像素速度", "--move-speed 400")
+				if speed_raw > 0.0:
+					opts["move_speed"] = speed_raw
+					i += 1
+			"--jump-velocity":
+				var jump_raw := _positive_float(args, i + 1, "--jump-velocity", "像素速度", "--jump-velocity 1200")
+				if jump_raw > 0.0:
+					opts["jump_velocity"] = jump_raw
+					i += 1
+			"--gravity":
+				var gravity_raw := _positive_float(args, i + 1, "--gravity", "像素加速度", "--gravity 4200")
+				if gravity_raw > 0.0:
+					opts["gravity"] = gravity_raw
+					i += 1
 		i += 1
 	return opts
+
+
+## 读一个必须为正的浮点取值。不合法时报错并返回 0，调用方据此跳过该参数。
+static func _positive_float(args: PackedStringArray, index: int, flag: String, unit: String, example: String) -> float:
+	var raw := _value_at(args, index)
+	if not raw.is_valid_float() or float(raw) <= 0.0:
+		push_error("%s 需要接一个正的%s，例如 %s，收到：%s" % [flag, unit, example, raw])
+		return 0.0
+	return float(raw)
 
 
 static func _value_at(args: PackedStringArray, index: int) -> String:

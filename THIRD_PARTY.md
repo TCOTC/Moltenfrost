@@ -20,7 +20,6 @@
 
 | 库 | 用途 | 许可 | 引入阶段 |
 |---|---|---|---|
-| `ramokz/phantom-camera` | 3D 相机机位与切换 | MIT | 第 2 阶段 |
 | `derkork/godot-statecharts` | 角色与机关状态图 | MIT | 第 2 阶段 |
 | `Ark2000/PankuConsole` | 运行时调试面板 | MIT | 第 2 阶段 |
 | `Maaack/Godot-Menus-Template` | 菜单与输入重绑定界面 | MIT | 第 2 阶段，按需 |

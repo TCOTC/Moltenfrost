@@ -4,12 +4,12 @@
   <img src="logo.png" alt="熔霜 · Moltenfrost" width="160">
 </p>
 
-3D 双人元素协同解谜游戏，开发中。
+2D 横版双人元素协同解谜游戏，开发中。
 
 - 玩法：两名角色各具元素属性，在同一个物理世界内协同解谜，并在此基础上扩展元素反应与 PVE 内容。
 - 平台：桌面端，Windows（x86_64）与 macOS（Universal 2，支持范围为 Apple Silicon）。
 - 联机：双人各用一台设备，通过联机协作，不做单机同屏。
-- 技术：Godot 4.7.2，渲染后端 Forward+，物理引擎 Jolt，联机传输层用 `ENetMultiplayerPeer`。
+- 技术：Godot 4.7.2，渲染后端 Forward+，2D 物理（`GodotPhysics2D`，2D 侧没有可选后端），联机传输层用 `ENetMultiplayerPeer`。
 
 ## 开发环境
 

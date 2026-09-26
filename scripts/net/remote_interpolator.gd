@@ -24,11 +24,12 @@ extends RefCounted
 ##    修法：这种时刻把显示时刻**重新锚定**到新数据之前一个水位处。
 ##    因为显示当时就停在对端静止的位置上，而新数据也从那里开始，所以重新锚定不会造成跳变。
 ##
-## 缓冲是**固定值**而不是按实测空档自动定。曾经试过按空档自适应，但那条路有正反馈陷阱：
-## 静止时长本身就是一次极大的"空档"，它会反过来把水位推向上限，于是对端每停一次，
-## 永久滞后就增加一次（实测 2 秒静止即把水位推到 400 ms 上限）。
-## 而真正想覆盖的只是链路抖动（十几到一百多毫秒），与静止时长差一个数量级以上，
-## 无法用同一个统计量区分。所以取固定值，把"链路多久来一次包"交给诊断输出观察。
+## 缓冲（水位）是**自适应**的：按最近窗口内实测的最大连续间隔定基准，再加一层卡顿补偿。
+## 难点在于"静止时长"本身就是一次极大的"空档"，若把它算进去就会形成正反馈：
+## 对端每停一次，水位被推向上限，永久滞后就增加一次（实测一次 2 秒静止即把水位推到上限）。
+## 真正要盖住的只是链路抖动（十几到一百多毫秒），与静止时长差一个数量级以上，
+## 因此不能用"间隔有多大"这一个统计量区分。当前实现用**位移与速度是否相符**来区分：
+## 只有相符的间隔才收进水位的样本（见 push 里的 expected 判断与 _update_buffer）。
 ##
 ## 显示时钟按可变钟速前进，而不是用固定延迟查询：
 ##   - 缓冲偏少（快要被追平）→ 钟速 0.9 倍，让新快照追上来；
@@ -54,6 +55,9 @@ extends RefCounted
 #### 代价两条：远端角色整体晚一个缓冲（默认 150 ms）；
 ## 显示的运动速度与实际最多差一成（钟速 0.9～1.1）。两者都只作用于"别人看到的我"，
 ## 不影响本机操作，也不参与判定——权威节点上的位置始终用收到的原始值（见 player.gd）。
+##
+## 本类与维度无关：状态是 Vector2，位移与速度的单位都是像素（2D 版）。
+## 3D → 2D 的迁移在这里只改了类型名，其余逻辑（含全部常量与判定）不依赖维度。
 ##
 ## 这个类不接触场景树，时间由调用方传入，因此可以单独测试，见 tests/remote_interpolator_test.gd。
 
@@ -111,7 +115,7 @@ const MAX_STATES := 64
 const TIMELINE_DISCONTINUITY := 2.0
 
 var _times: PackedFloat64Array = PackedFloat64Array()
-var _states: Array[Vector3] = []
+var _states: Array[Vector2] = []
 ## 当前水位（秒）。默认按实测自适应；由调用方显式指定时改为固定值（adaptive = false）。
 var buffer: float = DEFAULT_BUFFER
 ## 为 false 时 buffer 不被自适应改写。
@@ -135,7 +139,7 @@ var _gaps: PackedFloat64Array = PackedFloat64Array()
 ## 它与 _last_unique_wall 不同：后者是显示帧累计时间，用于“数据是否仍在流动”，
 ## 而水位需要真实墙钟才能反映链路空档。
 var _last_arrival_wall: float = -1.0
-## 速度估计（米／秒），由最近的位移段得出。
+## 速度估计（像素／秒），由最近的位移段得出。
 ## 它用来区分一段大间隔的两种成因，两者需要完全不同的处理：
 ##   连续移动中的发送停顿（发送方自己的帧卡了一下）→ 位移量约等于 速度×间隔 → 直接插值即可；
 ##   对端静止后重新移动 → 位移量远小于 速度×间隔 → 需要补保持点，否则会把静止时长当成位移。
@@ -177,7 +181,7 @@ var _rate: float = 1.0
 ## 而不是本地接收时刻。为什么这一点关键见文件头第 5 点。
 ## arrival_wall 是本地墙钟时刻（秒），只用于估水位。不传时退化为 sender_time 代替，
 ## 因此不涉及网络的测试只需要传两个参数。
-func push(state: Vector3, sender_time: float, arrival_wall: float = -1.0) -> void:
+func push(state: Vector2, sender_time: float, arrival_wall: float = -1.0) -> void:
 	# 时间倒退说明发送方重启了或计时源换了，丢弃历史重新开始，否则会算出错误的结果。
 	if not _times.is_empty() and sender_time < _times[_times.size() - 1]:
 		reset()
@@ -210,7 +214,7 @@ func push(state: Vector3, sender_time: float, arrival_wall: float = -1.0) -> voi
 			# 这段位移按速度估计"应当"占多长。时间轴是否被拉长要与它比较，
 			# 而不是与固定一个物理步比较：否则位移大时（发送方卡帧、掉步、或者
 			# 墙钟前进而物理位置没跟上）会把整段位移压进一帧，
-			# 真机实测最大单帧位移 0.17～0.75 m，而正常值应为 0.05 m。
+			# 真机实测最大单帧位移 0.17～0.75 m（3D 版实测值），而正常值应为 0.05 m。
 			if _speed <= 0.0:
 				# 刚开局，还没有速度估计，因此没有依据判断这段间隔是否正常。
 				# 只用它建立速度估计：既不收水位样本，也不补保持点。
@@ -272,10 +276,10 @@ func push(state: Vector3, sender_time: float, arrival_wall: float = -1.0) -> voi
 
 ## 推进显示并返回本帧应显示的位置。delta 是显示帧的时长（秒）。
 ## 这是生产路径；position_at() 只做纯查询，供测试与内部使用。
-func advance(delta: float) -> Vector3:
+func advance(delta: float) -> Vector2:
 	_samples += 1
 	if _states.is_empty():
-		return Vector3.ZERO
+		return Vector2.ZERO
 	# 单帧异常不应让显示时钟一次跳很远，见 MAX_FRAME 的说明。
 	delta = minf(delta, MAX_FRAME)
 	_wall += delta
@@ -308,9 +312,9 @@ func advance(delta: float) -> Vector3:
 ## 取 target 时刻的位置。落在两个快照之间时线性插值；超出两端时保持端点。
 ## 不外推的理由：外推会把显示推到真实位置之前，真实快照到达时再被拉回，
 ## 看起来就是"快速往回一点再继续"（橡皮筋），比"停一下"更难接受。
-func position_at(target: float) -> Vector3:
+func position_at(target: float) -> Vector2:
 	if _states.is_empty():
-		return Vector3.ZERO
+		return Vector2.ZERO
 	var last := _states.size() - 1
 	if target <= _times[0]:
 		return _states[0]
