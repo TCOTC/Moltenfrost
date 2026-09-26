@@ -32,6 +32,36 @@ ERROR: Failed to load script "res://scripts/main.gd" ...    # 被它间接加载
 
 退出码取自场景脚本里的 `get_tree().quit(<码>)`（`--script` 的 `quit(<码>)` 同理）。
 
+## 导出预设的 `all_resources` 不含普通文本（2026-09-26 实测）
+
+`export_filter="all_resources"` 只涵盖**被识别为资源**的文件。`.cfg`、`.json`、`.txt` 这类
+普通文本不在其中，**必须写进 `include_filter`**，否则：
+
+- 编辑器里 `FileAccess` / `ConfigFile` 读得到，一切正常；
+- **导出产物的 pck 里根本没有这个文件**，运行时读不到 → 静默回退（若代码写了兜底值）
+  或直接失败。属于"本地对、发出去就坏"的一类问题。
+
+实测：新增 `config/product.cfg` 后先不加 `include_filter` 导出，用自制的
+`tools/pck-find.mjs` 在 pck 里搜路径 → `MISSING`；加上 `include_filter="config/*.cfg"` 后
+重新导出 → `FOUND`。那个工具是通用的，可查任意子串：
+
+```powershell
+node tools/pck-find.mjs build/server/probe.pck config/product.cfg
+```
+
+注意它的**局限**：只在 pck 里做字节搜索，因此
+
+- 能可靠找到**文件路径**（pck 的目录区以明文存路径）；
+- 找不到被压缩的脚本内容——`script_export_mode=2` 下脚本是压缩二进制，
+  脚本里写的字符串常量搜索不到（实测搜域名时 `MISSING`，而脚本路径 `FOUND`）。
+  所以它用来验"文件有没有进产物"，不是用来验"产物里的值是什么"。
+
+导出命令（`--export-release <预设名> <输出路径>`，预设名取 `export_presets.cfg` 里的 `name=`）：
+
+```powershell
+& <godot> --headless --path . --export-release "Windows" build/server/probe.exe
+```
+
 ## 编辑器会重写文件（2026-09-23 实测）
 
 - `project.godot`：编辑器保存工程时整份重写。手写注释全部丢失（连头部说明都被换成 Godot 自己的模板），等于默认值的设置也会被删掉——例如显式写的 `renderer/rendering_method="forward_plus"` 就被移除了，因为 Forward+ 本来就是默认值。

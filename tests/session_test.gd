@@ -59,6 +59,12 @@ func _ready() -> void:
 	_ok(_player_count() == 0, "专用服务端不应当生成角色，实际 %d 个" % _player_count())
 	var menu: Node = _main.get("_menu")
 	_ok(menu != null and not menu.visible, "无头启动不应当打开初始界面")
+	# 入口脚本在启动时读一次 config/product.cfg，因此到这里它应当已经读过。
+	# 这条断言把它钉住：以后若有人把那次调用挪走或删掉，界面会静默用兜底值，
+	# 而兜底值恰好等于文件里的值，于是不会表现出任何异常。
+	#（用 `_exit_tree` 而不是 `_init`，因为 main.gd 的 _start_session 在 _ready 里跑。）
+	_ok(ProductConfig.loaded_from_file(),
+		"入口脚本启动时应当加载过 config/product.cfg（否则界面会用兜底值）")
 
 
 func _process(delta: float) -> void:
@@ -95,8 +101,7 @@ func _case_cmdline() -> void:
 	_ok(not missing.has("advertise"), "--advertise 缺少取值时不应被解析")
 
 
-func _case_host() -> void:
-	# 回到初始界面这一步在无头下只是结束会话。角色节点走的是延迟释放，因此要下一帧才看不到。
+func _case_host() -> void:	# 回到初始界面这一步在无头下只是结束会话。角色节点走的是延迟释放，因此要下一帧才看不到。
 	_ok(Net.role == Net.Role.OFFLINE, "回到初始界面之后应当是未开始会话状态，实际 role=%d" % Net.role)
 	_ok(_player_count() == 0, "回到初始界面之后不应当留下角色，实际 %d 个" % _player_count())
 	_ok(_listener.listen_for_rooms(), "监听探测端口应当成功")

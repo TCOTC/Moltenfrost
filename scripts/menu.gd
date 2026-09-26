@@ -13,17 +13,18 @@ extends CanvasLayer
 ## 除了探测到的房间，列表最前面还有一个**固定条目：官方公网服务端**。
 ## 它的存在有两个理由：跨网联机时局域网探测本来就收不到对方的广播（受限广播只走默认路由那张网卡），
 ## 而玩家也不该为了连官方服务器去手输一遍域名。
+##
+## 那个地址**不写在这里**，而是读 config/product.cfg（见 scripts/product_config.gd）：
+## 它随部署变化（换机器、换域名），而界面只是它的一个使用者。
 
 signal host_requested(room_name: String, port: int)
 signal join_requested(address: String, port: int)
 
-## 官方服务端的域名。它指向一台按量计费的云服务器，重建实例会让公网地址变，
-## 但域名不变，因此这里写域名而不是 IP。换服务器时只改这一行。
-## 新加的实例要同步放行 UDP 端口，否则会以连接超时的形式失败（详见 memory/networking.md）。
-const OFFICIAL_HOST := "moltenfrost-server.mytemos.com"
 ## 固定条目在列表里的显示名。带"官方"二字是为了与探测到的玩家房间区分开。
+## 这是展示文案而非环境相关的值，所以留在代码里。
 const OFFICIAL_NAME := "官方房间（公网）"
 
+## 端口输入框的合法范围。
 const MIN_PORT := 1
 const MAX_PORT := 65535
 
@@ -178,7 +179,7 @@ func _on_rooms_changed(listed: Array) -> void:
 
 ## 固定条目与探测到的房间合成一份列表：固定条目在前，探测到的在后。
 ## 同地址同端口的探测结果会被去掉，否则同一台服务器会在列表里出现两次——
-## 调试时把 OFFICIAL_HOST 临时改成本机的局域网地址就会遇到那种情况。
+## 调试时把 config/product.cfg 里的地址临时改成本机地址就会遇到那种情况。
 func _merge_rooms(discovered: Array) -> Array:
 	var merged: Array = _builtin_rooms()
 	var taken: Dictionary = {}
@@ -194,14 +195,15 @@ func _merge_rooms(discovered: Array) -> Array:
 
 
 ## 固定条目。形状与探测到的房间一致，因此列表重建、选中、加入都不用分两条路径。
-## 端口取 Net.DEFAULT_PORT 而不是写常量：它本来就是默认游戏端口，
-## 而写成运行期取值可以避免与那个默认值分叉（`const` 里不能引用自动加载的常量）。
+## 地址与端口取自 config/product.cfg；那里读不到时会回退到代码里的兜底值。
 func _builtin_rooms() -> Array:
+	var host := ProductConfig.official_host()
+	var port := ProductConfig.official_port()
 	return [{
-		"key": "official:%s:%d" % [OFFICIAL_HOST, Net.DEFAULT_PORT],
+		"key": "official:%s:%d" % [host, port],
 		"name": OFFICIAL_NAME,
-		"address": OFFICIAL_HOST,
-		"port": Net.DEFAULT_PORT,
+		"address": host,
+		"port": port,
 		"official": true,
 	}]
 

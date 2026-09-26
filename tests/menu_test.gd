@@ -10,10 +10,12 @@ extends SceneTree
 const MENU_SCENE := preload("res://scenes/menu.tscn")
 const Discovery := preload("res://scripts/net/lan_discovery.gd")
 
-## 官方房间的域名。这里**有意重复**写一份而不是读 MainMenu.OFFICIAL_HOST：
-## 若两边一起写错（例如域名拼错），读常量就只是自己跟自己对答案，断言会通过而实际连不上。
-## 独立写一份才能发现改动被漏掉。域名一旦更换，这里也要改——这是刻意的代价。
-const OFFICIAL_HOST := "moltenfrost-server.mytemos.com"
+## 官方房间的地址来源变了：以前是界面里的一个常量（测试有意重复写一份），
+## 现在是 config/product.cfg。因此这里不再重复那个字面量，而是分两层断言：
+##   1. 界面用的是 ProductConfig 解析出来的值（接线正确）
+##   2. 那个值本身像个主机名（属性检查，不依赖配置文件的内容）
+## 第 2 层取代了原来的"重复一份常量"：重复常量只能防住"改了一处忘了另一处"，
+## 而属性检查能防住"配置文件被改成了不合法的值"，覆盖面更宽也更有意义。
 
 ## 自检取值，避开开发时常用的 27015。界面上的默认端口与广播里的游戏端口刻意取不同值，
 ## 这样"加入房间时用的是房间自带的端口"才是一个有内容的断言。
@@ -98,9 +100,19 @@ func _case_room_listed() -> bool:
 	# 固定条目必须排在最前：它不随每秒的刷新而移动，玩家刚点中的项就不会跳走位置。
 	var first: Dictionary = _list().get_item_metadata(0)
 	_ok(bool(first.get("official", false)), "列表第一项应当是官方房间")
-	_ok(String(first.get("address", "")) == OFFICIAL_HOST, "官方房间的地址应当是内置域名，实际「%s」" % first.get("address", ""))
-	_ok(int(first.get("port", 0)) == Net.DEFAULT_PORT, "官方房间的端口应当是默认游戏端口，实际 %d" % int(first.get("port", 0)))
+	_ok(String(first.get("address", "")) == ProductConfig.official_host(), "官方房间的地址应当来自 ProductConfig，实际「%s」" % first.get("address", ""))
+	_ok(int(first.get("port", 0)) == ProductConfig.official_port(), "官方房间的端口应当来自 ProductConfig，实际 %d" % int(first.get("port", 0)))
 	_ok(_list().get_item_text(0).contains("公网"), "官方房间的文案应当标明是公网，实际「%s」" % _list().get_item_text(0))
+
+	# 与配置内容无关的属性检查。上一条只证明"界面读到了同一个值"，
+	# 若那个值本身是拼错的域名，两条都会通过。这里查它会像个主机名：
+	# 非空、不含空格、带点（域名或 IP 都符合）。这能拦住最常见的误操作——
+	# 把地址写成空、写了带空格的、或删掉了点。
+	var host := ProductConfig.official_host()
+	_ok(not host.is_empty(), "官方房间的地址不应为空")
+	_ok(not host.contains(" "), "官方房间的地址不应含空格，实际「%s」" % host)
+	_ok(host.contains("."), "官方房间的地址应当像个域名或 IP（含点），实际「%s」" % host)
+	_ok(ProductConfig.official_port() > 0, "官方房间的端口应当为正，实际 %d" % ProductConfig.official_port())
 
 	# 加入官方房间：地址与端口都来自固定条目，与界面上的输入框无关。
 	_select(0)
@@ -108,8 +120,8 @@ func _case_room_listed() -> bool:
 	_button("RoomButtons/Join").pressed.emit()
 	_ok(_join_calls.size() == 1, "选中官方房间后点加入应当发出一次 join_requested，实际 %d 次" % _join_calls.size())
 	if _join_calls.size() == 1:
-		_ok(String(_join_calls[0][0]) == OFFICIAL_HOST, "官方房间的加入地址应当是内置域名，实际「%s」" % _join_calls[0][0])
-		_ok(int(_join_calls[0][1]) == Net.DEFAULT_PORT, "官方房间的加入端口应当是默认游戏端口，实际 %d" % int(_join_calls[0][1]))
+		_ok(String(_join_calls[0][0]) == ProductConfig.official_host(), "官方房间的加入地址应当来自 ProductConfig，实际「%s」" % _join_calls[0][0])
+		_ok(int(_join_calls[0][1]) == ProductConfig.official_port(), "官方房间的加入端口应当来自 ProductConfig，实际 %d" % int(_join_calls[0][1]))
 
 	# 加入探测到的房间：端口必须取自房间，而不是界面上的默认端口。
 	# 这两个值在测试里刻意取成不同，这样这一条才是有内容的断言。
