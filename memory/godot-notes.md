@@ -19,6 +19,27 @@
 - 改名后可删除 `.godot/imported/<旧名>-*` 与 `.godot/uid_cache.bin`，交由引擎重建；`uid` 保持不变，引用方不受影响。
 - PCK 虚拟文件系统区分大小写，而 Windows 与近年 macOS 的默认文件系统不区分（官方文档 Project organization），因此资源文件名统一用小写加下划线。
 
+## 删掉整个 `.godot/` 让它重建（2026-09-26 实测）
+
+同一路径被另一个工程用过之后，`.godot/` 会留下一堆属于那个工程的死缓存——它们不参与运行，
+但会占空间、并在排查资源问题时误导判断（本仓库实测留下了 86 个文件 / 27 MiB 的
+`imported/`，含 `02_weapon.png`、`abandoned_workshop_1k.hdr`、`r1_front.png` 等本工程不存在的条目）。
+清理办法就是整目录删除后重建。
+
+- **必须先关掉编辑器**。编辑器在内存里持有文件系统缓存，边开边删它会写回旧内容（等于白删）；
+  而且 Windows 上部分文件被占用，删除可能只完成一半。删之前用
+  `Get-Process -Name 'Godot*'` 确认没有进程。
+- 重建：`& <godot 可执行文件> --headless --path <项目目录> --import`。
+  输出分三段，可逐项核对：`first_scan_filesystem` → `update_scripts_classes`（逐个列出
+  `class_name` 注册的脚本，本工程是 4 个：`NetCmdline`/`Player`/`RemoteInterpolator`/`StepAnalyzer`）
+  → `reimport`（逐个列出实际导入的资源，本工程只有 `logo.png` 一个）。
+- **会丢的只有编辑器状态**：窗口布局、打开过的脚本与光标位置、场景折叠状态
+  （都在 `.godot/editor/`）。工程设置、导出预设、代码与资源都在 `.godot/` 之外，不受影响。
+- 实测回收：29.0 MiB / 186 个文件 → 0.3 MiB / 8 个文件。`shader_cache/`（1.79 MiB）
+  会在编辑器打开时按需重建，属正常现象。
+- `.godot/` 自带一个 `.gdignore`（由引擎创建），因此它不会被当成资源目录扫描。
+  这与 `build/` 需要手写 `.gdignore` 是两件事。
+
 ## 全局类缓存缺失时所有 `class_name` 都解析失败（2026-09-24 实测）
 
 - 症状：命令行直接运行工程，蹦出 `Parse Error: Identifier "NetCmdline" not declared in the current scope`、
@@ -70,3 +91,74 @@
 - 这台机器到 GitHub CDN 约 0.11 MiB/s，且开多连接并不更快（瓶颈是单 IP 限速，不是连接数）。325 MiB 约需 50 分钟。
 - 清华 / 上交 / 中科大 / TuxFamily 四个镜像都没有同步这个文件，只能走 GitHub。
 - Godot 认的模板目录名是 `<版本>.<渠道>`，例如 `4.7.2.stable`；Windows 在 `%APPDATA%\Godot\export_templates\`，macOS 在 `~/Library/Application Support/Godot/export_templates/`。
+
+## 2D 与 3D 的配置差异（2026-09-25 实测，4.7.2）
+
+- `physics/2d/physics_engine` 的可选值是 `DEFAULT,GodotPhysics2D,Dummy`——**Jolt 只服务 3D**
+  （`physics/3d/physics_engine` 才是 `DEFAULT,Jolt Physics,GodotPhysics3D,Dummy`）。
+  因此 `AGENTS.md` 里"必须显式选 Jolt"这条只对 3D 成立；2D 侧除 `Dummy`（无物理）外只有一套实现，
+  不存在"换后端后手感变化、参数要在选定后端之后调"这个问题，
+  代价是堆叠与旋转平台的求解稳定性弱于 Jolt。`physics/2d/default_gravity` 默认 980 px/s²。
+- `rendering/textures/canvas_textures/default_texture_filter` 默认 `Linear`（像素美术要改 `Nearest`）；
+  `display/window/stretch/mode` 可选 `disabled,canvas_items,viewport`，
+  `display/window/stretch/scale_mode` 可选 `fractional,integer`。
+- 2D 类名已用 `ClassDB.class_exists()` 核实存在：`CharacterBody2D`、`CollisionShape2D`、
+  `CollisionPolygon2D`、`Sprite2D`、`Polygon2D`、`Camera2D`、`TileMapLayer`、`TileSet`、
+  `AnimatableBody2D`、`StaticBody2D`、`RigidBody2D`、`Light2D`、`PointLight2D`、`DirectionalLight2D`、
+  `CanvasModulate`、`Parallax2D`、`ParallaxBackground`、`ParallaxLayer`、`Line2D`、`GPUParticles2D`。
+  `TileMapLayer` 与 `Parallax2D` 的父类都是 `Node2D`。
+- 读这些设置值的通用做法（临时脚本用完即删）：写一个 `extends SceneTree` 的脚本，
+  在 `_initialize()` 里遍历 `ProjectSettings.get_property_list()`，字段 `hint_string` 就是可选项列表；
+  运行方式是 `<godot 可执行文件> --headless --path <项目目录> --script res://<脚本路径>.gd`。
+  只读项目设置不涉及场景树，因此可以放在 `_initialize()`；凡是涉及节点入树的都要等 `_process` 第一帧。
+
+## Camera2D 没有 `current` 属性（2026-09-25 实测）
+
+`Camera3D` 有 `current`，`Camera2D` 没有；给 `Camera2D` 写 `current = true` 会报
+`Invalid assignment of property or key 'current' ... on a base object of type 'Camera2D'`。
+它只有 `enabled`（可读写）、`make_current()` 与 `is_current()`。实测得到的三条：
+
+- `enabled = false` 的相机入树时不接管视角，之后也不会把视角清空。
+- 已经有相机在用的时候，后来入树的相机不会抢走视角。
+- 要**确定**接管必须调 `make_current()`。它不能先于 `enabled` 调，引擎里有
+  `enabled && is_inside_tree()` 的断言，先调会报 `Condition "!enabled || !is_inside_tree()" is true`。
+
+因此"每个实例各带一台相机、只有本机那台生效"的写法是：场景里写 `enabled = false`，
+本机角色 `enabled = true` 再 `make_current()`。实测 `get_viewport().get_camera_2d()` 始终是本机那台，
+之后出场的远端角色不会把视角抢走。参考 `scripts/player.gd` 的 `_ready`。
+
+**`SceneTree` 脚本不能在 `_initialize()` 里做入树相关的事**：那个阶段节点还不算在树内，
+上一条的断言就是这么被触发的。要等 `_process` 的第一帧，`tests/remote_interpolator_test.gd`
+与 `tools/` 下一次写临时脚本时都照此办理。
+
+## `add_child` 会立刻执行该节点的 `_ready`（2026-09-25 复核）
+
+`add_child(node)` 返回时 `node._ready()` 已经跑完，因此**运行时构建的带脚本节点必须先把子节点建全、
+设好脚本与导出属性，最后才 `add_child`**；否则脚本的 `_ready` 里访问 `$Mesh` 之类的子节点会失败。
+
+这条的另一个用途是**捕获运行时的副作用**：实例化 `main.tscn` 时，`main.gd` 的 `_ready` 会按
+`project.godot` 把窗口设成全屏（`window/size/mode=3`）。想用截图脚本临时开窗口化，
+就必须在 `add_child` **之后**再调 `DisplayServer.window_set_mode()`，写在前面会被 `_ready` 覆盖掉。
+
+## `physics_frame` 信号早于节点的 `_physics_process`（2026-09-26 实测）
+
+`SceneTree.physics_frame` 在每个物理步开始时发出，**早于**所有节点的 `_physics_process`。
+用 `extends SceneTree` 的脚本做逐帧验证时这一点决定了两件事：
+
+- 注入输入要在这个信号里做：此时 `Input.action_press()` 当帧就能被节点的
+  `Input.is_action_just_pressed()` 看到，行为与真人按键一致。
+- **观测状态会晚一帧**：在这里读到的 `velocity` / `is_on_floor()` 是**上一步**处理完的结果。
+  因此不能写「站在地面且竖直速度为负」这类瞬时判据——等能观测到时，起跳已经把角色推离地面、
+  `is_on_floor()` 已经变假了。实测踩过一次，报出来的失败是假失败。
+  改为看「竖直速度是否转负」「若干帧内的最小值」这类在信号之后仍成立的条件。
+
+## 手写速度积分比解析式跳得高（2026-09-26 实测）
+
+自己用 `velocity.y += gravity * delta` 加 `move_and_slide()` 驱动跳跃时，实测高度比
+`v² / (2·g)` 高约 `v·dt/2`（半隐式欧拉每步先加一次重力再位移的离散补偿）。
+60 Hz、1160 px/s、4200 px/s² 下：解析 160.2 px、实测 170.1 px，差额 9.9 px 与 `v·dt/2 = 9.7 px` 对得上。
+滞空的实测值也比 `2v/g` 长约 0.05 s，其中一半是同样的补偿，另一半是落地判定的帧粒度
+（`is_on_floor()` 要到碰撞之后的下一帧才为真）。
+
+结论：调跳跃手感时按这个差额估算即可，不要因为「算出来和手感对不上」去反推重力。
+数值本身在 `scripts/player.gd`，注释里记了实测值。
