@@ -497,9 +497,9 @@ func _on_join_failed() -> void:
 	_menu.set_message(message)
 
 
-func _on_server_left() -> void:
-	print("[session] 与主机断开")
-	_return_to_menu("与主机断开。可以重新选择一个房间，或由本机创建房间。")
+func _on_server_left(reason: String) -> void:
+	print("[session] 与主机断开：%s" % reason)
+	_return_to_menu("%s。可以重新选择一个房间，或由本机创建房间。" % reason)
 
 
 func _set_notice(text: String) -> void:
@@ -541,6 +541,18 @@ func _describe_peers() -> String:
 	for id in ids:
 		parts.append(str(id))
 	return ", ".join(parts)
+
+
+## 退出时主动结束会话。
+## 这个钩子在**正常的进程退出**时都会跑到：systemd 停止服务（发 SIGTERM）、控制台上关机、
+## 窗口被关掉。主动 close 会让 ENet 向各客户端发出断开通知，它们因此**立刻**知道服务端下线，
+## 不必等心跳超时或 ENet 自己的超时。
+## 进程被强杀（SIGKILL、断电、内核崩溃）时跑不到这里，那种情况由客户端的心跳判定兜住
+##（见 scripts/net/net.gd 的 HEARTBEAT_TIMEOUT）。两者都要有，因为前者盖不住后者。
+## 实测（2026-09-26）：`systemctl stop` 于 0.4 秒内完成，无 SIGKILL，无超时等待。
+func _exit_tree() -> void:
+	if Net.role != Net.Role.OFFLINE:
+		Net.close()
 
 
 func _ensure_window_mode() -> void:

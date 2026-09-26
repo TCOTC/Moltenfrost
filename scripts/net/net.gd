@@ -23,7 +23,12 @@ const MAX_CLIENTS := 4
 signal hosting_started(port: int)
 signal join_succeeded()
 signal join_failed()
-signal server_left()
+## 与主机的会话结束。`reason` 是一句可以直接显示给玩家的话（"与主机断开"、
+## "与主机失去联系（心跳超时）"……），因此上层不必再加一段猜测成因的文案。
+## 断开的原因只有两种，但两者的等待时间相差很多，分清楚才能给出有用的提示：
+##   ENet 报了断开（对端主动关、或 ENet 自己超时）
+##   心跳超时（本文件自己判定，见 HEARTBEAT_TIMEOUT）
+signal server_left(reason: String)
 
 var role: Role = Role.OFFLINE
 var port: int = DEFAULT_PORT
@@ -37,10 +42,20 @@ const PING_INTERVAL := 1.0
 ## 时延测量保留的最大在途样本数。防止丢包时表越来越大。
 const PING_MAX_IN_FLIGHT := 16
 
+## 服务端离线的判定窗口（秒）。
+## 客户端每秒发一次 ping、服务端立刻回 pong，因此连续这么长时间收不到 pong 就可判定下线。
+## 为什么要自己判而不用等 ENet：ENet 的超时长度随 RTT 变化（实测同一链路上 6～10 秒），
+## 而“服务端被强制结束”时客户端只能干等——期间画面完全静止、也没有任何提示，
+## 玩家分不清是卡住了还是对方已经退出。自己判能给出一个明确的上限与原因。
+## 取值要能容忍偶发丢包（5 秒相当于容忍连续 4 次丢失），也要明显短于 ENet 的等待。
+const HEARTBEAT_TIMEOUT := 5.0
+
 var _ping_elapsed: float = 0.0
 var _ping_seq: int = 0
 ## 序号 → 发出时的本地毫秒时刻。
 var _ping_sent: Dictionary = {}
+## 最近一次收到 pong 的时刻（毫秒）。0 表示本次会话还没收到过样本。
+var _last_pong_ms: int = 0
 
 var _peer: MultiplayerPeer = null
 var _dedicated: bool = false
@@ -56,11 +71,28 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if role == Role.OFFLINE:
 		return
+	# 心跳判定放在发 ping 之前：它每秒才跑一次，而判定窗口是若干秒，顺序无关。
+	if role == Role.CLIENT and is_connected_to_server():
+		_check_server_liveness()
 	_ping_elapsed += delta
 	if _ping_elapsed < PING_INTERVAL:
 		return
 	_ping_elapsed = 0.0
 	_ping_peers()
+
+
+## 逐帧检查服务端是否还在。只有已连接的客户端需要它。
+func _check_server_liveness() -> void:
+	var now := Time.get_ticks_msec()
+	if _last_pong_ms == 0:
+		# 还没有样本（刚连上）。从这一刻开始计，避免把"连接建立之前"的时间算进去。
+		_last_pong_ms = now
+		return
+	var silent := float(now - _last_pong_ms) / 1000.0
+	if silent <= HEARTBEAT_TIMEOUT:
+		return
+	push_warning("与主机的心跳中断 %.1f 秒（上限 %.0f），判定为已下线" % [silent, HEARTBEAT_TIMEOUT])
+	_finish_session("与主机失去联系（超过 %.0f 秒没有回应）" % HEARTBEAT_TIMEOUT)
 
 
 ## 向所有已知 peer 发一次时延探测。用不可靠传输：
@@ -98,10 +130,13 @@ func ping(seq: int, sent_msec: int) -> void:
 
 @rpc("any_peer", "call_remote", "unreliable")
 func pong(seq: int, sent_msec: int) -> void:
+	# 能收到 pong 就是"服务端还在"的证据，因此每次都要更新，
+	# 不看下面那个 case（序号对不上也可能对方重发过）。
+	_last_pong_ms = Time.get_ticks_msec()
 	if not _ping_sent.has(seq):
 		return
 	_ping_sent.erase(seq)
-	var sample := float(Time.get_ticks_msec() - sent_msec)
+	var sample := float(_last_pong_ms - sent_msec)
 	# 指数平滑：单个样本会被一次调度尖峰拉高很多。
 	rtt_ms = sample if rtt_ms < 0.0 else lerpf(rtt_ms, sample, 0.3)
 
@@ -168,6 +203,8 @@ func join(address: String, p_port: int = DEFAULT_PORT) -> Error:
 	role = Role.CLIENT
 	_dedicated = false
 	port = p_port
+	# 清掉上一次会话的心跳样本，否则刚连上就会被误判为超时。
+	_last_pong_ms = 0
 	return OK
 
 
@@ -180,7 +217,18 @@ func close() -> void:
 	role = Role.OFFLINE
 	_dedicated = false
 	rtt_ms = -1.0
+	_last_pong_ms = 0
 	_ping_sent.clear()
+
+
+## 会话结束的统一收尾。两条路径都汇聚到这里：ENet 报的断开，以及本文件自己的心跳超时。
+## 它们可能先后到达（心跳先超时、ENet 随后才报），所以先看 role 去重——
+## 否则上层会收到两次 server_left，表现为提示文案被覆盖一次、角色节点被清两遍。
+func _finish_session(reason: String) -> void:
+	if role == Role.OFFLINE:
+		return
+	close()
+	server_left.emit(reason)
 
 
 func _on_connected_to_server() -> void:
@@ -193,5 +241,4 @@ func _on_connection_failed() -> void:
 
 
 func _on_server_disconnected() -> void:
-	close()
-	server_left.emit()
+	_finish_session("与主机断开")

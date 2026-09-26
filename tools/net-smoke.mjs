@@ -325,6 +325,22 @@ async function main() {
     }
     assertions.push("两个实例均在运行且控制台无脚本错误");
 
+    // 服务端被强制结束时，客户端必须自己能发现并给出提示。
+    // 这是最容易出问题的一条：进程没了不会发任何包，UDP 也没有 FIN 之类的收尾，
+    // 只能靠客户端自己判定。所以这里断言一个**上限**，避免以后改动把它拖成
+    // 几十秒的静默卡住（那种情况玩家分不清是卡住了还是对方退出了）。
+    // stop() 在 Windows 上走 taskkill /F，等价于强杀，正是要模拟的场景。
+    const killedAt = Date.now();
+    stop(server);
+    await waitFor(client, "与主机断开", 20000);
+    const detectedSeconds = (Date.now() - killedAt) / 1000;
+    if (detectedSeconds > 15) {
+      throw new Error(
+        `服务端被强制结束后客户端用了 ${detectedSeconds.toFixed(1)} 秒才发现，超过 15 秒上限`,
+      );
+    }
+    assertions.push(`服务端被强制结束后客户端在 ${detectedSeconds.toFixed(1)} 秒内判定下线`);
+
     say("");
     for (const line of assertions) say(`  ok  ${line}`);
     say("\n冒烟测试通过。");
