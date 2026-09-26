@@ -1,15 +1,31 @@
 class_name Player
-extends CharacterBody3D
-## 玩家角色。
+extends CharacterBody2D
+## 玩家角色（2D 横版）。
 ##
 ## 移动由本机权威判定：谁的角色谁模拟，因此操作手感与网络延迟无关。
 ## 这里是有意如此选择的——第 2 阶段的目标是验证双元素协同的手感，
 ## 若现在就让服务端模拟玩家移动，本地必须同时实现客户端预测与位置回滚，
 ## 那是 netfox 一类方案覆盖的范围（设计文档 4.3）。附带说明：一旦引入
-## 需要服务端判定的内容（推箱、可旋转平台、机关），那些物体改成服务端权威，
+## 需要服务端判定的内容（推箱、可移动平台、机关），那些物体改成服务端权威，
 ## 届时玩家移动是否一并改为"上报输入 + 服务端模拟"要等网络损伤测试的结果再定。
 ##
-## 角色本身是胶囊体，绕 Y 轴旋转不可见，所以当前只同步位置。
+## 单位是像素。3D 版用"米"，而 2D 里位置与速度本身就是像素量，
+## 再套一层米与像素的换算会让每个常量都要乘一次系数，多一层就多一次漏乘的机会，
+## 因此这里全部直接用像素，并以 64 px 作为关卡的一个方格。
+## move_speed / jump_velocity / gravity 是手感数值，不是物理量，因此由人试玩后定
+##（AGENTS.md 交付前自检一节）。三个值都可用命令行临时覆盖（见 main.gd 的启动参数），
+## 这样能在一个会话里不动代码地扫几组取值；推算式写在三个变量各自的注释里。
+## 2026-09-26 按"想要快节奏、移动偏慢"的试玩反馈调过一次，取值变化写在各自的注释里。
+##
+## 角色不旋转，所以相机就是它的一个固定偏移子节点，不需要逐帧写位置：
+## 2D 横版没有"角色转向带动相机"这件事，Camera2D 的局部 position 就等于世界偏移。
+## 偏移写在场景里（见 scenes/player.tscn），这里不重复一份。
+## 若以后给角色加了旋转（例如受击翻滚），相机就得改为 top_level 并逐帧赋值。
+##
+## 角色只占第 2 层碰撞层、掩码只含第 1 层（世界），因此两人互不碰撞。
+## 一半是玩法选择：本项目是协作解谜而不是对打，互相挡住只会变成事故现场。
+## 另一半是技术考虑：双方位置都是本机权威的，若两人还互相碰撞，
+## 各自都会被对方那份已经过时的位置往外推，凭空多出一类抖动。
 ##
 ## 远端角色的显示由 RemoteInterpolator 平滑：收到的位置快照先入缓冲，
 ## 再按显示帧在缓冲中取样。取样结果写到子节点 Visual 的局部偏移上，而不是写回 position——
@@ -21,19 +37,50 @@ extends CharacterBody3D
 ## 它们必须对所有实例生效，而实例是运行时生成的，所以放在静态变量上；
 ## 每台机器各自从自己的命令行取值，因此两台机器可以分别调试而不必重启对方。
 
-const MOVE_SPEED := 6.0
-const JUMP_VELOCITY := 5.0
-const GRAVITY := 18.0
-## 自动驾驶的路线：沿各自的出生 Z 坐标在 X 方向往返。
-## 为什么不用固定的一条线：两个实例若走同一条线会直接撞在一起（实测过），
-## 而各自的出生点分布在半径 4 的圆上、Z 坐标互不相同，因此各走一条、互不相碰。
-## 同时避开场景里的台阶：台阶占 z ∈ [-5, -1]，而出生点的 Z 坐标在 ±4 以内不会落入该区间。
-const AUTOPILOT_END := 7.5
+## 水平移动速度（px/s）。2026-09-26 两次上调：220 → 360 → 480，
+## 按 64 px 一方格即 3.4 → 5.6 → 7.5 格/秒。
+## 注意它不带动跳跃：滞空由重力与起跳初速决定，与水平速度无关，
+## 因此速度一提高，**同一个跳跃的水平跨度会跟着变大**（= move_speed × 滞空），
+## 关卡沟宽要按这个值重算，实测值见下面 gravity 的注释。可用 `--move-speed` 覆盖。
+static var move_speed := 480.0
+## 起跳初速度（px/s），向上为负。跳跃高度 = jump_velocity² / (2 × gravity)，详见下面 gravity 的说明。
+## 可用 `--jump-velocity` 覆盖。
+static var jump_velocity := 1160.0
+## 重力加速度（px/s²）。CharacterBody2D 的竖直速度由本脚本驱动，
+## 因此这里用自己的常量，而不是 physics/2d/default_gravity（那个默认 980，是按“米”的直觉定的）。
+## 解析式：高度 = jump_velocity² / (2 × gravity)，滞空 = 2 × jump_velocity / gravity，
+## 跳跃的水平跨度 = move_speed × 滞空（跟水平速度一起变，是个组合量，
+## 所以关卡沟宽不要单独看这个或那个，要两个一起算）。
+## 解析值：高 160 px（2.5 格）、滞空 0.552 s、跨度 265 px（4.1 格）。
+## **实测值比解析值高约一成：高 170 px、滞空 0.600 s、跨度 288 px（4.5 格）。**
+## 差额来自离散积分（见下），因此**关卡沟宽要按实测值算**，
+## 按解析值设计会少留约一成余量，手感上表现为“看起来过得去但偶尔撞边”。
+## 上一组 720 / 2000 配合 360 px/s 是 130 px（2 格）与 3.1 格。
+## 也就是跳得更高而滞空更短——“同样的高度用更少的时间”是快节奏手感的关键，
+## 单纯把重力调小只会让人飘起来，反而更慢。
+##
+## **实测比解析值高，这不是误差而是离散积分的结果**：半隐式欧拉每步先加一次重力再位移，
+## 相当于比连续模型多上升约 v·dt/2（60 Hz、1160 px/s 时是 9.7 px）。
+## 2026-09-26 用无头脚本实测：高度 170.1 px、滞空 0.600 s，
+## 而解析值加这 9.7 px 是 169.9 px——对得上。改数值时按这个差额估算即可，
+## 不必担心“算出来的高度和手感不一致”而去反推重力。（滞空的实测值比解析值多约 0.05 s，
+## 其中一半是同样的离散补偿，另一半是落地判定的帧粒度：is_on_floor 要到碰撞之后的下一帧才为真。）
+## 可用 `--gravity` 覆盖。
+static var gravity := 4200.0
+## 土狼时间（秒）：离开地面之后仍允许起跳的窗口。0 表示关闭。
+## 它只把“想跳”变得更容易被判为有效，不改变可达高度与距离。
+## 实测：60 Hz 下窗口正好在第 6 帧归零（0.083→0.067→…→0.000）；
+## 离地 50 ms 时按下可起跳，200 ms 时按下不起跳。
+const COYOTE_TIME := 0.1
+## 跳跃输入缓冲（秒）：落地之前按下的跳跃会在落地那一帧生效。0 表示关闭。
+## 实测：下降末期按下后，落地当帧竖直速度即转为约 -1160（正常起跳）。
+const JUMP_BUFFER := 0.12
+## 自动驾驶的路线：沿 X 轴在 ±AUTOPILOT_END 之间往返。
+## 2D 只有一条地面线，而两人互不碰撞，所以不需要像 3D 版那样给每人分配一条独立车道。
+## 端点取值避开场景里的台阶（台阶右表面在 x=-432 处）。
+const AUTOPILOT_END := 300.0
 ## 判定到达路点的距离。只会在两个端点短暂停下，不会周期性地出现。
-const AUTOPILOT_ARRIVE := 0.5
-## 相机相对角色的固定偏移。相机设了 top_level，因而它不随角色旋转，
-## 角色加上转动之后也不需要在这里做补偿。
-const CAMERA_OFFSET := Vector3(0.0, 9.0, 9.0)
+const AUTOPILOT_ARRIVE := 12.0
 ## 自动驾驶：让本机角色在两点之间往返移动。用于在不按键的情况下测量显示平滑，
 ## 也供自动检查核对位置同步确实在流动。由入口脚本按命令行开关写入。
 static var autopilot: bool = false
@@ -44,11 +91,11 @@ static var autopilot_stop: bool = false
 ## 可用 --interp-buffer 临时覆盖，仅用于对照。
 static var interp_buffer: float = 0.0
 
-## 自动驾驶当前的朝向与所在车道，只在本机角色上有意义。
+## 自动驾驶当前的朝向，只在本机角色上有意义。
 var _autopilot_forward: bool = true
-## 车道取首次物理帧时的 Z 坐标，也就是出生点所在的圈。
-var _autopilot_lane_z: float = 0.0
-var _autopilot_lane_ready: bool = false
+## 土狼时间与跳跃输入缓冲的剩余时间（秒）。见 COYOTE_TIME 与 JUMP_BUFFER 的说明。
+var _coyote: float = 0.0
+var _jump_buffer: float = 0.0
 
 ## 仅用于双人测试时分清谁是谁，正式的角色美术与元素表现另做。
 const MOLTEN_COLOR := Color(1.0, 0.42, 0.12)
@@ -73,18 +120,19 @@ var _arrivals: int = 0
 var _max_gap: float = 0.0
 var _last_arrival: float = 0.0
 ## 显示的位移统计。
-## 单帧最大位移是"看到的跳"的直接计量：
-## 角色以 6 m/s 移动、120 帧显示时，平滑运动每帧只应前进 0.05 m；
-## 若出现 0.5 m 量级，就是那一帧把积攒的运动量一次走完了。
+## 单帧最大位移是"看到的跳"的直接计量：平滑运动每帧只应前进
+## move_speed ÷ 显示帧率（480 px/s、120 帧时是 4 px）；
+## 若出现十倍量级，就是那一帧把积攒的运动量一次走完了。
 ## 本区间的第一个采样只用来建立基准，不参与比较（_has_prev）。
 var _has_prev: bool = false
-var _prev_sample: Vector3 = Vector3.ZERO
+var _prev_sample: Vector2 = Vector2.ZERO
 ## 本区间内显示位置相对起点移动了多远，用来区分"角色本来就没动"与"显示被冻住"。
 ## 用显示位置而不是收到的位置，这样本机角色也能得到同一口径的数字。
-var _step_origin: Vector3 = Vector3.ZERO
+var _step_origin: Vector2 = Vector2.ZERO
 var _display_moved: float = 0.0
 ## 单帧最大位移。"平稳一下、突然跳一下"里的那个跳就是这个值的尖峰：
-## 角色以 6 m/s 移动、120 帧显示时，平滑运动应只有 0.05 m；若出现 0.5 m 量级，就是跳。
+## 平滑运动每帧只应前进 move_speed ÷ 显示帧率（480 px/s、120 帧时是 4 px）；
+## 若出现十倍量级，就是跳。
 var _step_max: float = 0.0
 ## 最大单帧位移发生时的上下文，用于判定它的成因：
 ## 看当时是否在保持、滞后多少、距上次收到新位置多久。
@@ -102,13 +150,13 @@ var _change_gap_max: float = 0.0
 ## 判定细节见 scripts/net/step_analyzer.gd（它把"掉头"排除在外，只计真正的回拉）。
 ## 回拉检测，现在预期恒为 0——回拉的两个成因都已修掉（外推已移除，锚定改成只向前）。
 ## 保留它的理由是**回归守卫**：它是唯一能区分"网络给了旧值"与"本地平滑造成回拉"的手段，
-## 一旦以后改动平滑逻辑又引入回拉，这两个数会立刻非零。判定细节见 scripts/net/step_analyzer.gd。
+## 一旦以后改动平滑逻辑又引入回拉，这两个数会立刻非零。
 var _recv_dips: StepAnalyzer = StepAnalyzer.new()
 var _disp_dips: StepAnalyzer = StepAnalyzer.new()
 
-@onready var _mesh: MeshInstance3D = $Visual/Mesh
-@onready var _visual: Node3D = $Visual
-@onready var _camera: Camera3D = $Camera
+@onready var _body: Polygon2D = $Visual/Body
+@onready var _visual: Node2D = $Visual
+@onready var _camera: Camera2D = $Camera
 @onready var _sync: MultiplayerSynchronizer = $Sync
 
 
@@ -127,7 +175,17 @@ func _ready() -> void:
 	# 只有本机的角色参与模拟；显示帧则两边都要处理，本机用于相机跟随，远端用于插值。
 	set_physics_process(_local)
 	set_process(true)
-	_camera.current = _local
+	# 相机已在场景里作为子节点定好偏移，这里只需要决定由谁来用：
+	# 每个实例都带一台相机，但只有本机那一台接管视角，否则视角会在两人之间乱跳。
+	# 两步都不能省：enabled 是"参不参与"的开关，而相机入树时**不会**因为 enabled 就自动接管，
+	# 所以还要 make_current()。反过来先 make_current() 会失败，因为引擎里有
+	# enabled && is_inside_tree() 的断言（实测报错 Condition "!enabled || !is_inside_tree()"）。
+	# 另注：Camera2D 没有 current 属性，那是 Camera3D 的。
+	if _local:
+		_camera.enabled = true
+		_camera.make_current()
+	else:
+		_camera.enabled = false
 	_sync.synchronized.connect(_on_synchronized)
 	# 无头运行时没有画面，也就没有要平滑的对象；而且判定应当用收到的原值。
 	# 所以插值只做在有显示的非本机角色上。
@@ -158,44 +216,49 @@ func _physics_process(delta: float) -> void:
 	if _local:
 		# 与位置同步更新，因此两者描述的是同一个时刻。
 		sync_time = Time.get_ticks_msec()
-	if not is_on_floor():
-		velocity.y -= GRAVITY * delta
-	elif Input.is_action_just_pressed("jump"):
-		velocity.y = JUMP_VELOCITY
 
-	var direction := Vector3(
-		Input.get_axis("move_left", "move_right"),
-		0.0,
-		Input.get_axis("move_forward", "move_back"),
-	)
+	# 跳跃的两个宽容窗口。先记下"这一帧按下过"，这样落地前一帧按下的跳跃会在落地那一帧生效。
+	if Input.is_action_just_pressed("jump"):
+		_jump_buffer = JUMP_BUFFER
+	else:
+		_jump_buffer = maxf(_jump_buffer - delta, 0.0)
+	var on_floor := is_on_floor()
+	if on_floor:
+		_coyote = COYOTE_TIME
+	else:
+		_coyote = maxf(_coyote - delta, 0.0)
+
+	if not on_floor:
+		velocity.y += gravity * delta
+	# 起跳的判据用 on_floor 或土狼时间，而不是只看 _coyote：
+	# COYOTE_TIME 设为 0 时前者仍然成立，于是"关掉土狼时间"不会连带把起跳本身关掉。
+	# 防连跳靠的是清空 _jump_buffer，与 on_floor 在起跳后当帧仍为真这一点无关。
+	if _jump_buffer > 0.0 and (on_floor or _coyote > 0.0):
+		velocity.y = -jump_velocity
+		_jump_buffer = 0.0
+		_coyote = 0.0
+
+	var direction := Input.get_axis("move_left", "move_right")
 	if autopilot or autopilot_stop:
-		# 沿各自的出生 Z 坐标在 X 方向往返。始终在动、方向固定，因此显示一旦冻结就能直接看出来。
+		# 沿地面往返。始终在动、方向固定，因此显示一旦冻结就能直接看出来。
 		# 到达端点时必须"翻转后立即改向新路点"，不能把方向置零：置零会让角色留在到达半径内，
-		# 下一帧又判定到达并再次翻转，于是永远卡在端点不动。
-		if not _autopilot_lane_ready:
-			# 首次物理帧记录车道，此后不再改变，避免角色在半途换线。
-			_autopilot_lane_z = global_position.z
-			_autopilot_lane_ready = true
+		# 下一帧又判定到达并再次翻转，于是永远停在端点不动。
 		if autopilot_stop and int(Time.get_ticks_msec() / 1000) % 2 == 1:
 			# 走走停停模式：奇数秒完全静止（与真人松手时一样）。
-			direction = Vector3.ZERO
+			direction = 0.0
 		else:
-			var target := _autopilot_target()
-			var to_target := target - global_position
-			to_target.y = 0.0
-			if to_target.length() < AUTOPILOT_ARRIVE:
+			var to_target := _autopilot_target() - global_position.x
+			if absf(to_target) < AUTOPILOT_ARRIVE:
 				_autopilot_forward = not _autopilot_forward
-				target = _autopilot_target()
-				to_target = target - global_position
-				to_target.y = 0.0
-			direction = to_target.normalized()
-	velocity.x = direction.x * MOVE_SPEED
-	velocity.z = direction.z * MOVE_SPEED
+				to_target = _autopilot_target() - global_position.x
+			direction = signf(to_target)
+	velocity.x = direction * move_speed
 	move_and_slide()
 
 
-func _autopilot_target() -> Vector3:
-	return Vector3(AUTOPILOT_END if _autopilot_forward else -AUTOPILOT_END, 0.0, _autopilot_lane_z)
+## 当前朝向对应的自动驾驶目标点（只用到 X 坐标）。
+func _autopilot_target() -> float:
+	return AUTOPILOT_END if _autopilot_forward else -AUTOPILOT_END
 
 
 func _process(delta: float) -> void:
@@ -210,17 +273,13 @@ func _process(delta: float) -> void:
 			_visual.position = displayed - position
 		else:
 			displayed = position
-	else:
-		# 相机用全局坐标定位，所以它只跟随角色的位置，不跟随角色的转动。
-		_camera.global_position = global_position + CAMERA_OFFSET
-		_camera.look_at(global_position + Vector3.UP * 1.2, Vector3.UP)
 	_record_step(displayed)
 
 
 ## 统计显示帧之间位置有没有变化与有没有倒退。对两边的角色都做，因为成因不同：
 ## 本机角色若停在大量帧上不动，说明物理帧率低于显示帧率（与网络无关）；
 ## 远端角色若如此，则说明平滑未能拿到可用的区间。
-func _record_step(displayed: Vector3) -> void:
+func _record_step(displayed: Vector2) -> void:
 	if not _has_prev:
 		# 本区间的第一个采样：只建立基准，不参与最大值与变化计数的比较。
 		_has_prev = true
@@ -329,8 +388,8 @@ func _now() -> float:
 ## 描述最大单帧位移发生时的状态，用于判定跳跃成因。只在刷新纪录时调用，不会产生日志噪声。
 func _describe_context(step: float) -> String:
 	if _interp == null:
-		return "%.2f m（无平滑）" % step
-	return "%.2f m 当时：滞后 %.0f/%.0f ms 钟速 %.2f 保持=%s 距新位置 %.0f ms" % [
+		return "%.2f px（无平滑）" % step
+	return "%.2f px 当时：滞后 %.0f/%.0f ms 钟速 %.2f 保持=%s 距新位置 %.0f ms" % [
 		step,
 		_interp.fill_seconds() * 1000.0,
 		_interp.buffer_seconds() * 1000.0,
@@ -341,7 +400,6 @@ func _describe_context(step: float) -> String:
 
 
 func _apply_element_color() -> void:
-	var material := StandardMaterial3D.new()
-	# 一号位是「熔」，其余是「霜」。每个实例各建一份材质，避免相互影响。
-	material.albedo_color = MOLTEN_COLOR if peer_id == 1 else FROST_COLOR
-	_mesh.material_override = material
+	# 一号位是「熔」，其余是「霜」。颜色写在视觉子节点上，判定节点不动。
+	# 正式的角色美术与元素表现另做，这里只是让人能分清谁是谁。
+	_body.modulate = MOLTEN_COLOR if peer_id == 1 else FROST_COLOR

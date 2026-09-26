@@ -9,6 +9,10 @@ extends SceneTree
 ## 用分位数（90 分位 = 17 ms）定延迟会被这种空档击穿，表现为"卡一下再瞬移"；
 ## 而按最大空档定固定延迟又会让链路正常时白白多等。
 ## 所以这里断言两件事：_case_occasional_gap_has_no_stall 与 _case_occasional_gap_never_goes_backward。
+##
+## 单位：断言消息里的距离写作 px（生产里的位置就是像素）。模拟用的速度取 6 px/s 这样一个
+## 偏小的值，延续 3D 版的取值，目的是让这里的数字能与历史实测记录直接对照。
+## 插值器本身与单位无关，因此这里只在意位移的**比例**，不关心绝对速度是否符合游戏手感。
 
 const Interpolator := preload("res://scripts/net/remote_interpolator.gd")
 
@@ -63,23 +67,23 @@ func _run_all() -> void:
 func _case_empty() -> void:
 	var interp = Interpolator.new()
 	_ok(not interp.has_state(), "空缓冲时 has_state() 应为 false")
-	_ok(interp.advance(FRAME) == Vector3.ZERO, "空缓冲时 advance() 应返回原点")
+	_ok(interp.advance(FRAME) == Vector2.ZERO, "空缓冲时 advance() 应返回原点")
 
 
 func _case_single_state() -> void:
 	var interp = Interpolator.new()
-	interp.push(Vector3(3, 0, 0), 10.0)
-	_ok(interp.advance(FRAME) == Vector3(3, 0, 0), "只有一个快照时 advance() 应返回该快照")
-	_ok(interp.position_at(5.0) == Vector3(3, 0, 0), "只有一个快照时，比它更早的时刻应返回该快照")
-	_ok(interp.position_at(20.0) == Vector3(3, 0, 0), "只有一个快照时，比它更晚的时刻应返回该快照")
+	interp.push(Vector2(3, 0), 10.0)
+	_ok(interp.advance(FRAME) == Vector2(3, 0), "只有一个快照时 advance() 应返回该快照")
+	_ok(interp.position_at(5.0) == Vector2(3, 0), "只有一个快照时，比它更早的时刻应返回该快照")
+	_ok(interp.position_at(20.0) == Vector2(3, 0), "只有一个快照时，比它更晚的时刻应返回该快照")
 
 
 func _case_linear_midpoint() -> void:
 	# 匀速直线：0 秒在原点，1 秒在 x=10。查询 0.3 秒应得 x=3。
 	var interp = Interpolator.new()
-	interp.push(Vector3.ZERO, 0.0)
-	interp.push(Vector3(10, 0, 0), 1.0)
-	var sampled: Vector3 = interp.position_at(0.3)
+	interp.push(Vector2.ZERO, 0.0)
+	interp.push(Vector2(10, 0), 1.0)
+	var sampled: Vector2 = interp.position_at(0.3)
 	_ok_close(sampled.x, 3.0, "匀速运动中点的插值结果应为 x=3，实际 %.4f" % sampled.x)
 
 
@@ -100,7 +104,7 @@ func _case_duplicate_snapshots_are_dropped() -> void:
 		if clock + 1e-9 >= next_physics:
 			physics_time = next_physics
 			next_physics += physics_step
-		interp.push(Vector3(physics_time * 6.0, 0.0, 0.0), clock)
+		interp.push(Vector2(physics_time * 6.0, 0.0), clock)
 		if clock >= 0.2:
 			var x: float = interp.advance(FRAME).x
 			if samples > 0:
@@ -117,7 +121,7 @@ func _case_duplicate_snapshots_are_dropped() -> void:
 # ---------------------------------------------------------------- 用户的真实场景
 
 ## 造一条 60 次/秒的流，每隔 gap_every 个样本插入一次 100 ms 空档。
-## 位置始终按 6 m/s 匀速前进，这样任何"走一下停一下"都会表现为取样位移不均匀。
+## 位置始终按 6 px/s 匀速前进，这样任何"走一下停一下"都会表现为取样位移不均匀。
 func _drive_bursty(interp: Interpolator, duration: float, gap_every: int, gap_size: float) -> Dictionary:
 	var clock := 0.0
 	var next_send := 0.0
@@ -131,7 +135,7 @@ func _drive_bursty(interp: Interpolator, duration: float, gap_every: int, gap_si
 	while clock <= duration:
 		while clock + 1e-9 >= next_send:
 			# 位置是发送时刻的函数，因此"空档"表现为这段时间没有新位置——与真实情况一致。
-			interp.push(Vector3(clock * 6.0, 0.0, 0.0), clock)
+			interp.push(Vector2(clock * 6.0, 0.0), clock)
 			sent += 1
 			var step := 1.0 / 60.0
 			if gap_every > 0 and sent % gap_every == 0:
@@ -155,7 +159,7 @@ func _drive_bursty(interp: Interpolator, duration: float, gap_every: int, gap_si
 	}
 
 
-## 造一条流：发送间隔固定 1/60 秒、位移按 6 m/s 前进。
+## 造一条流：发送间隔固定 1/60 秒、位移按 6 px/s 前进。
 ## lag_after 起的 lag_count 个样本，到达时刻被推后 extra_lag 秒，
 ## 也就是那一段时间里接收方收不到任何新数据（与链路多排了一会儿队一致）。
 ## start_time 是发送方时间戳的起点，传上一次的返回值即可续上时间轴；
@@ -178,7 +182,7 @@ func _drive_stream(interp: Interpolator, duration: float, start_time: float,
 			next_send += 1.0 / 60.0
 		while not pending.is_empty() and float(pending[0][0]) <= clock + 1e-9:
 			var item: Array = pending.pop_front()
-			interp.push(Vector3(float(item[2]), 0.0, 0.0), float(item[1]), float(item[0]))
+			interp.push(Vector2(float(item[2]), 0.0), float(item[1]), float(item[0]))
 		interp.advance(FRAME)
 		clock += FRAME
 	return sender_time
@@ -196,7 +200,7 @@ func _case_occasional_gap_has_no_stall() -> void:
 		"偶尔 100 ms 空档时不应出现停顿，实际停顿比例 %.1f%%" % (hold_ratio * 100.0))
 	# 位移的抖动应当很小：停顿会让某帧位移接近 0，补步会让它接近两倍。
 	_ok(float(result["worst_wobble"]) <= 6.0 * FRAME * 0.6,
-		"每帧位移应大致均匀，最大偏差 %.4f m（步长 %.4f m）" % [result["worst_wobble"], 6.0 * FRAME])
+		"每帧位移应大致均匀，最大偏差 %.4f px（步长 %.4f px）" % [result["worst_wobble"], 6.0 * FRAME])
 
 
 func _case_occasional_gap_never_goes_backward() -> void:
@@ -232,7 +236,7 @@ func _case_burst_with_sender_timestamps_has_no_jump() -> void:
 			# 一簇：连续 6 份位置，发送时刻彼此相隔一个物理帧，但同一帧内送达。
 			for i in 6:
 				sender_time += physics_step
-				interp.push(Vector3(sender_time * 6.0, 0.0, 0.0), sender_time)
+				interp.push(Vector2(sender_time * 6.0, 0.0), sender_time)
 			next_burst += 0.1
 		var x: float = interp.advance(frame_step).x
 		# 从 0.5 秒起开始统计，避开开局锚定。
@@ -247,7 +251,7 @@ func _case_burst_with_sender_timestamps_has_no_jump() -> void:
 	# 容差取步长的 1 倍：钟速 ±10% 会带来约 0.1 倍的变化，
 	# 而"一帧内走完一簇"会产生约 6 倍步长的偏差，两者相差一个量级，不会混淆。
 	_ok(worst <= expected * 1.0,
-		"成簇到达下每帧位移应保持均匀，最大偏差 %.4f m（步长 %.4f m）" % [worst, expected])
+		"成簇到达下每帧位移应保持均匀，最大偏差 %.4f px（步长 %.4f px）" % [worst, expected])
 
 
 func _case_burst_with_arrival_timestamps_would_jump() -> void:
@@ -268,7 +272,7 @@ func _case_burst_with_arrival_timestamps_would_jump() -> void:
 			for i in 6:
 				sender_time += physics_step
 				# 关键差别：所有 6 份都用"到达时刻" clock。
-				interp.push(Vector3(sender_time * 6.0, 0.0, 0.0), clock)
+				interp.push(Vector2(sender_time * 6.0, 0.0), clock)
 			next_burst += 0.1
 		var x: float = interp.advance(frame_step).x
 		if clock >= 0.5:
@@ -279,15 +283,15 @@ func _case_burst_with_arrival_timestamps_would_jump() -> void:
 		clock += frame_step
 	var expected := 6.0 * frame_step
 	_ok(worst > expected * 1.5,
-		"用到达时刻打时间戳时应当出现明显的单帧跳跃（这正是已修好的那个现象），实际最大偏差 %.4f m" % worst)
+		"用到达时刻打时间戳时应当出现明显的单帧跳跃（这正是已修好的那个现象），实际最大偏差 %.4f px" % worst)
 
 
 func _case_sender_frame_hitch_has_no_jump() -> void:
 	# 发送方的物理帧偶尔会掉步：某一帧渲染卡住数百毫秒时，引擎补跑的物理步数
 	# 受 max_physics_steps_per_frame 限制，于是**墙钟（也就是时间戳）前进得比位置多**。
 	# 真机证据：Windows 侧本机"位置更新"的最大间隔测到 483 ms 与 650 ms，
-	# 而同期远端显示的最大单帧位移是 0.17～0.75 m（正常应为 0.05 m）。
-	# 这里的构造正是那件事：时间戳前进 650 ms，位置只前进 8 个物理步（0.8 m）。
+	# 而同期远端显示的最大单帧位移是 0.17～0.75 m（3D 版实测值，正常应为 0.05 m）。
+	# 这里的构造正是那件事：时间戳前进 650 ms，位置只前进 8 个物理步（0.8 px）。
 	# 关键是这一段位移**不能按一个物理步去摊**——位移是多步的量，压进一帧就是跳跃。
 	var interp = Interpolator.new()
 	var physics_step := 1.0 / 60.0
@@ -314,7 +318,7 @@ func _case_sender_frame_hitch_has_no_jump() -> void:
 			sender_time += stamp_step
 			position += move_step
 			# 发送方卡住的这段时间里没有包发出，所以到达间隔与时间戳步长一致。
-			interp.push(Vector3(position, 0.0, 0.0), sender_time, clock)
+			interp.push(Vector2(position, 0.0), sender_time, clock)
 			next_arrive += stamp_step
 		var x: float = interp.advance(frame_step).x
 		# 从 1 秒起统计，避开开局锚定；卡顿期间的停顿不计入（只看最大值）。
@@ -326,10 +330,10 @@ func _case_sender_frame_hitch_has_no_jump() -> void:
 		clock += frame_step
 	_ok(samples > 300, "取样次数应当足够多，实际 %d" % samples)
 	# 容差取 2 倍步长：显示要以 1.1 倍钟速追赶，单帧位移最多比正常大 10%；
-	# 而把 0.8 m 压进一帧会产生 16 倍步长的偏差，两者相差一个量级。
+	# 而把 0.8 px 压进一帧会产生 16 倍步长的偏差，两者相差一个量级。
 	var expected := speed * frame_step
 	_ok(worst <= expected * 2.0,
-		"发送方掉步时不应出现跳跃，最大单帧位移 %.4f m（正常 %.4f m）" % [worst, expected])
+		"发送方掉步时不应出现跳跃，最大单帧位移 %.4f px（正常 %.4f px）" % [worst, expected])
 
 
 func _case_buffer_covers_arrival_gap() -> void:
@@ -348,7 +352,7 @@ func _case_buffer_covers_arrival_gap() -> void:
 		for j in 6:
 			sender_time += physics_step
 			position += 6.0 * physics_step
-			interp.push(Vector3(position, 0.0, 0.0), sender_time, wall)
+			interp.push(Vector2(position, 0.0), sender_time, wall)
 			sent += 1
 		wall += 0.12
 	_ok(sent == 240, "应当推入 240 份快照，实际 %d" % sent)
@@ -397,7 +401,7 @@ func _case_stationary_does_not_raise_stall_penalty() -> void:
 	# 挡住它的手段是时长范围：一次几秒的静止超过 STALL_MAX，不会被当成卡顿。
 	var interp = Interpolator.new()
 	var t := _drive_stream(interp, 3.0, 0.0)
-	var frozen := Vector3(t * 6.0, 0.0, 0.0)
+	var frozen := Vector2(t * 6.0, 0.0)
 	var clock := 0.0
 	while clock <= 3.0:
 		t += 1.0 / 60.0
@@ -454,7 +458,7 @@ func _case_stationary_does_not_inflate_buffer() -> void:
 	var learned := interp.buffer_seconds()
 	# 位置完全不变地推 3 秒（与真人松手时一样）。
 	var clock := 2.0
-	var frozen_position := Vector3(12.0, 0.0, 0.0)
+	var frozen_position := Vector2(12.0, 0.0)
 	while clock <= 5.0:
 		interp.push(frozen_position, clock)
 		interp.advance(FRAME)
@@ -484,13 +488,13 @@ func _case_resume_after_stationary_has_no_false_lag() -> void:
 		if clock + 1e-9 >= next_send:
 			next_send += step
 			x = clock * 6.0
-		interp.push(Vector3(x, 0.0, 0.0), clock)
+		interp.push(Vector2(x, 0.0), clock)
 		interp.advance(FRAME)
 		clock += FRAME
 	# 第二阶段：静止 2 秒（位置一直不变，但仍照常推进快照）。
 	var still_position := x
 	while clock <= 4.0:
-		interp.push(Vector3(still_position, 0.0, 0.0), clock)
+		interp.push(Vector2(still_position, 0.0), clock)
 		interp.advance(FRAME)
 		clock += FRAME
 	# 第三阶段：重新移动 0.5 秒，记录滞后与显示是否真的动起来。
@@ -503,7 +507,7 @@ func _case_resume_after_stationary_has_no_false_lag() -> void:
 		if clock + 1e-9 >= next_send:
 			next_send += step
 			x += 0.1
-		interp.push(Vector3(x, 0.0, 0.0), clock)
+		interp.push(Vector2(x, 0.0), clock)
 		var displayed: float = interp.advance(FRAME).x
 		if first_frame:
 			# 恢复后第一帧的滞后：不应把 2 秒静止时长算进去。
@@ -520,7 +524,7 @@ func _case_resume_after_stationary_has_no_false_lag() -> void:
 	# 这是滞后的正常表现；这里只要求它在整个窗口内确实前进了一段明显的距离。
 	var displayed_moved := last_displayed - first_displayed
 	_ok(last_displayed_set and displayed_moved >= 2.0,
-		"恢复后显示应随对端移动，实际只前进了 %.2f m" % displayed_moved)
+		"恢复后显示应随对端移动，实际只前进了 %.2f px" % displayed_moved)
 
 
 func _case_resume_after_stationary_has_no_jump() -> void:
@@ -547,7 +551,7 @@ func _case_resume_after_stationary_has_no_jump() -> void:
 			if clock + 1e-9 >= next_send:
 				next_send += step
 				x += 6.0 * step
-			interp.push(Vector3(x, 0.0, 0.0), clock)
+			interp.push(Vector2(x, 0.0), clock)
 		else:
 			# 静止期间不产生新位置（与真实情况一致：位置不变，快照会被当作重复丢掉）。
 			pass
@@ -567,10 +571,10 @@ func _case_resume_after_stationary_has_no_jump() -> void:
 	var expected := 6.0 * frame_step
 	# 3 秒按 120 帧取样共 360 帧，去掉开头 0.8 秒的锚定期，约 264 帧。
 	_ok(samples > 200, "取样次数应当足够多，实际 %d" % samples)
-	# 正常单帧位移是 0.05 m。容忍到 4 倍（0.2 m）以容纳钟速与保持点的近似，
+	# 正常单帧位移是 0.05 px。容忍到 4 倍（0.2 px）以容纳钟速与保持点的近似，
 	# 而修复前的尖峰是这个值的十几倍。
 	_ok(worst <= expected * 4.0,
-		"静止后重新移动时不应出现单帧大位移，最大 %.3f m（正常 %.3f m）" % [worst, expected])
+		"静止后重新移动时不应出现单帧大位移，最大 %.3f px（正常 %.3f px）" % [worst, expected])
 
 
 func _case_resume_does_not_rewind() -> void:
@@ -590,7 +594,7 @@ func _case_resume_does_not_rewind() -> void:
 		if moving and clock + 1e-9 >= next_send:
 			next_send += step
 			x += 6.0 * step
-			interp.push(Vector3(x, 0.0, 0.0), clock)
+			interp.push(Vector2(x, 0.0), clock)
 		if clock >= phase_end:
 			moving = not moving
 			phase_end += 0.5
@@ -601,18 +605,18 @@ func _case_resume_does_not_rewind() -> void:
 			rewind = minf(rewind, displayed - previous)
 		previous = displayed
 		clock += frame_step
-	_ok(rewind >= -0.02, "不应出现倒退，最大倒退 %.3f m" % (-rewind))
+	_ok(rewind >= -0.02, "不应出现倒退，最大倒退 %.3f px" % (-rewind))
 
 
 func _case_time_rewind() -> void:
 	# 时间倒退说明计时源换了，应当丢弃历史，而不是拿错位的两个快照去插值。
 	# 用位置断言覆盖同一件事：若历史没被丢掉，取样会落在两个错位的快照之间。
 	var interp = Interpolator.new()
-	interp.push(Vector3(1, 0, 0), 1.0)
-	interp.push(Vector3(2, 0, 0), 2.0)
-	interp.push(Vector3(3, 0, 0), 1.5)
-	_ok(interp.advance(FRAME) == Vector3(3, 0, 0), "时间倒退后 advance() 应使用新快照")
-	_ok(interp.position_at(1.5) == Vector3(3, 0, 0), "时间倒退后不应保留旧快照参与插值")
+	interp.push(Vector2(1, 0), 1.0)
+	interp.push(Vector2(2, 0), 2.0)
+	interp.push(Vector2(3, 0), 1.5)
+	_ok(interp.advance(FRAME) == Vector2(3, 0), "时间倒退后 advance() 应使用新快照")
+	_ok(interp.position_at(1.5) == Vector2(3, 0), "时间倒退后不应保留旧快照参与插值")
 
 
 # ---------------------------------------------------------------- 断言

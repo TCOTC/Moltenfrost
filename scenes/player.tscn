@@ -1,4 +1,4 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1_player"]
 
@@ -10,29 +10,25 @@ properties/1/path = NodePath(".:sync_time")
 properties/1/spawn = false
 properties/1/replication_mode = 1
 
-[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
-radius = 0.4
-height = 1.8
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_1"]
+size = Vector2(48, 96)
 
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_1"]
-radius = 0.4
-height = 1.8
-
-[node name="Player" type="CharacterBody3D"]
+[node name="Player" type="CharacterBody2D"]
+collision_layer = 2
+collision_mask = 1
 script = ExtResource("1_player")
 
-[node name="Visual" type="Node3D" parent="."]
+[node name="Visual" type="Node2D" parent="."]
 
-[node name="Mesh" type="MeshInstance3D" parent="Visual"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
-mesh = SubResource("CapsuleMesh_1")
+[node name="Body" type="Polygon2D" parent="Visual"]
+polygon = PackedVector2Array(-24, -48, 24, -48, 24, 48, -24, 48)
 
-[node name="Collision" type="CollisionShape3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
-shape = SubResource("CapsuleShape3D_1")
+[node name="Collision" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_1")
 
 [node name="Sync" type="MultiplayerSynchronizer" parent="."]
 replication_config = SubResource("SceneReplicationConfig_1")
 
-[node name="Camera" type="Camera3D" parent="."]
-top_level = true
+[node name="Camera" type="Camera2D" parent="."]
+enabled = false
+position = Vector2(0, -64)
