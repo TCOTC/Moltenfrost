@@ -2,11 +2,17 @@ extends Node2D
 ## 工程入口：决定本机在本次会话里的角色，并把状态显示在 HUD 上。
 ##
 ## 角色判定（参数解析见 scripts/net/net_cmdline.gd）：
-##   `--join <地址>`  连接到远端权威节点
-##   其余情况         开始监听，并且本机也是玩家（listen server）
-##   其中 headless    标记为专用服务端，本机不生成玩家角色
-## 也就是说"不带参数运行"等于本机开局，在编辑器里直接按运行就能调关卡与手感。
-## 目前还没有主菜单，所以默认值取最省事的那个；有菜单之后这里交给菜单决定。
+##   `--join <地址>`   连接到远端权威节点
+##   `--host`          本机开始监听，并且本机也是玩家（listen server）
+##   无参数、有画面     显示初始界面（scripts/menu.gd），由玩家选房间或创建房间
+##   无参数、无画面     当专用服务端，本机不生成玩家角色
+## 也就是说：有画面时启动会停在初始界面上，而无头启动没有人能点界面，只能直接开服务端。
+## 界面上的"创建房间"与命令行的 `--host` 是同一段代码，因此自动检查覆盖到的路径
+## 与真人玩到的路径一致。
+##
+## 初始界面里的"创建房间"就是在本机启动服务端，同时把房间广播到局域网，
+## 另一台机器停在界面上就能在列表里看到它（机制见 scripts/net/lan_discovery.gd）。
+## 对局中按 Esc 回到初始界面：客户端等于离开房间，主机等于关掉房间。
 ##
 ## 关于开发期窗口化：project.godot 里写了 window/size/mode=3（全屏）与
 ## window/size/mode.editor=0（窗口）。后者是特性标签覆盖，只在用编辑器程序运行的时候
@@ -16,6 +22,7 @@ extends Node2D
 
 const MODE_SETTING := "display/window/size/mode"
 const PLAYER_SCENE := preload("res://scenes/player.tscn")
+const MENU_SCENE := preload("res://scenes/menu.tscn")
 ## 生成位置沿地面横向等距错开。槽位由服务端分配，因此不会出现两人重叠在同一个点。
 ## 2D 只有一条地面线，所以是一维排布；间距取 96 px（角色宽 48 px，相当于留出一个身位）。
 const SPAWN_SLOTS := 6
@@ -28,8 +35,17 @@ const STATS_INTERVAL := 2.0
 
 @onready var _players: Node2D = $Players
 @onready var _spawner: MultiplayerSpawner = $Players/Spawner
+@onready var _hud: CanvasLayer = $HUD
 @onready var _status: Label = $HUD/Status
 
+## 初始界面与房间广播器。两者分开：创建房间之后界面就退场了，
+## 而广播要一直持续到对局结束（别人随时可能打开界面找房间）。
+var _menu: MainMenu = null
+var _discovery: LanDiscovery = null
+## 本次房间的名字。主机侧用于广播，也显示在 HUD 上，便于口头告诉另一台机器上的人。
+var _room_name: String = ""
+## 本次连接的 "地址:端口"，只用于提示文案。
+var _join_target: String = ""
 var _port: int = 0
 var _notice: String = ""
 ## peer id 到槽位的对应，只在服务端维护。
@@ -56,7 +72,19 @@ func _ready() -> void:
 	Net.join_failed.connect(_on_join_failed)
 	Net.server_left.connect(_on_server_left)
 
+	_build_menu()
 	_start_session()
+
+
+## 建初始界面。它自己的可见性开关在 scenes/menu.tscn 里（初始为隐藏），
+## 这里只负责连接信号；房间广播器与界面分开，见 _menu 的说明。
+func _build_menu() -> void:
+	_menu = MENU_SCENE.instantiate() as MainMenu
+	add_child(_menu)
+	_menu.host_requested.connect(_on_menu_host_requested)
+	_menu.join_requested.connect(_on_menu_join_requested)
+	_discovery = LanDiscovery.new()
+	add_child(_discovery)
 
 
 func _start_session() -> void:
@@ -83,20 +111,18 @@ func _start_session() -> void:
 	_report_feel()
 
 	if opts.has("join"):
-		var address := String(opts["join"])
-		_set_notice("正在连接 %s:%d …" % [address, _port])
-		Net.join(address, _port)
+		_begin_join(String(opts["join"]), _port)
 		return
 
-	# 没有 --join 就都当主机。headless 下没有窗口，也就没有本机玩家。
-	var dedicated := DisplayServer.get_name() == "headless"
-	if Net.host(_port, dedicated) != OK:
-		_set_notice("端口 %d 被占用，无法开始监听。用 --port 换一个端口。" % _port)
+	# 无头运行时没有人能点界面，因此直接当专用服务端——AGENTS.md 的交付前自检用的就是这条路径。
+	if DisplayServer.get_name() == "headless":
+		_host_game("", _port, true)
 		return
-	# 主机自己也是一个玩家，除非本次是无头的专用服务端。
-	# 本机是否为玩家只取决于运行模式，与它是权威节点这一点无关。
-	if not dedicated:
-		_spawn_player(Net.local_id())
+	if opts.has("host"):
+		_host_game("", _port, false)
+		return
+	# 有画面而不带参数：停在初始界面上，由玩家决定创建房间还是加入别人的房间。
+	_show_menu(_port)
 
 
 ## 把生效的手感数值与由它们推出的量打进日志。
@@ -116,6 +142,146 @@ func _report_feel() -> void:
 		height, height_measured, height_measured / 64.0,
 		airtime, Player.move_speed * airtime,
 	])
+
+
+# ---------------------------------------------------------------- 会话与界面
+
+## 显示初始界面。房间探测随之开始，HUD 让位（界面的底色是半透明的，留着会透出来）。
+func _show_menu(port: int) -> void:
+	_hud.visible = false
+	_menu.open(port)
+
+
+## 离开初始界面进入对局。
+func _leave_menu_for_game() -> void:
+	_menu.close()
+	_hud.visible = true
+
+
+## 创建房间：本机开始监听，并且（非专用服务端时）本机也是一个玩家。
+## 界面上的"创建房间"、命令行的 `--host` 与无头启动都汇聚到这里，三条路径的行为不会有差别。
+func _host_game(room_name: String, port: int, dedicated: bool) -> void:
+	_room_name = room_name if not room_name.is_empty() else LanDiscovery.default_room_name()
+	_port = port
+	if Net.host(_port, dedicated) != OK:
+		# 唯一可预期的失败是端口被占用（例如开发实例还开着同一个端口）。
+		# 有画面时回到界面让人换端口重试，无头时只能把原因写进日志。
+		var message := "端口 %d 被占用，无法创建房间。换一个端口再试。" % _port
+		push_error(message)
+		_set_notice(message)
+		if DisplayServer.get_name() != "headless":
+			_show_menu(_port)
+			_menu.set_message(message)
+		return
+	_leave_menu_for_game()
+	# 主机自己也是一个玩家，除非本次是无头的专用服务端。
+	# 本机是否为玩家只取决于运行模式，与它是权威节点这一点无关。
+	if not dedicated:
+		_spawn_player(Net.local_id())
+
+
+## 连接远端主机。界面列表里选中的房间与手动填写的地址都由这里发起。
+## 连接结果要等 Net.join_succeeded / join_failed，因此这里不切画面：
+## 失败时界面还留在屏幕上，可以直接换一个房间重试。
+func _begin_join(address: String, port: int) -> void:
+	_join_target = "%s:%d" % [address, port]
+	_port = port
+	_set_notice("正在连接 %s …" % _join_target)
+	if Net.join(address, port) != OK:
+		_on_join_failed()
+
+
+## 结束当前会话并回到初始界面。
+## 断开之后必须自己清掉角色节点：客户端收不到服务端发来的销毁包（连接已经断了），
+## 留着就会看到停在原地的角色。
+func _return_to_menu(message: String) -> void:
+	Net.close()
+	_discovery.stop()
+	_clear_players()
+	_room_name = ""
+	_join_target = ""
+	_notice = ""
+	if DisplayServer.get_name() == "headless":
+		# 无头运行时没有界面可回，停在"尚未开始会话"状态即可。
+		_refresh_status()
+		return
+	_show_menu(_port)
+	_menu.set_message(message)
+
+
+func _clear_players() -> void:
+	for child in _players.get_children():
+		if child is Player:
+			child.queue_free()
+	_slots.clear()
+
+
+## 把本机房间广播到局域网，供其他人停在初始界面时看到。
+## 端口由系统分配时（自检用的 `--port 0`）无法把地址告诉别人，因此不广播。
+func _start_announcing() -> void:
+	if Net.port <= 0:
+		print("[lan] 本机端口由系统分配，不广播房间（别人拿不到可以连接的端口）")
+		return
+	_discovery.announce(func() -> Dictionary:
+		return {
+			"name": _room_name,
+			"port": Net.port,
+			# 人数含主机自己，与界面上显示的"人"数是同一个口径。
+			"players": multiplayer.get_peers().size() + 1,
+		})
+	print("[lan] 已在 UDP %d 广播房间「%s」（游戏端口 %d）" % [
+		LanDiscovery.DISCOVERY_PORT, _room_name, Net.port,
+	])
+
+
+func _on_menu_host_requested(room_name: String, port: int) -> void:
+	_host_game(room_name, port, false)
+
+
+func _on_menu_join_requested(address: String, port: int) -> void:
+	_begin_join(address, port)
+
+
+## 对局中按 Esc 回到初始界面。主机按下等于关掉房间，另一台机器会收到"与主机断开"。
+## 用 ui_cancel 而不是写死键码，这样以后做输入重绑定也不必改这里。
+func _unhandled_input(event: InputEvent) -> void:
+	if _menu.visible:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_return_to_menu("已离开房间，可以重新选择或自己创建。")
+
+
+## 本机最可能被同网段其他机器使用的地址，形如 `192.168.5.210:27015`。
+## 自动探测在正常情况下已经够用，这一条只是给"探测不到"时留的备用路径。
+func _lan_hint() -> String:
+	if _port <= 0:
+		return ""
+	for address in _lan_addresses():
+		return "%s:%d" % [address, _port]
+	return ""
+
+
+## 本机的 IPv4 地址，"最像局域网地址"的排在前面。跳过环回与链路本地（169.254.*）：
+## 前者别人连不上，后者是没有取到 DHCP 地址时的自动地址。
+func _lan_addresses() -> PackedStringArray:
+	var preferred := PackedStringArray()
+	var rest := PackedStringArray()
+	for address in IP.get_local_addresses():
+		if address.contains(":") or address.begins_with("127.") or address.begins_with("169.254."):
+			continue
+		if address.begins_with("192.168.") or address.begins_with("10."):
+			preferred.append(address)
+		elif address.begins_with("172."):
+			# 172.16.0.0/12 是私有网段，第二段的取值在 16～31 之间。
+			var second := int(address.get_slice(".", 1))
+			if second >= 16 and second <= 31:
+				preferred.append(address)
+			else:
+				rest.append(address)
+		else:
+			rest.append(address)
+	preferred.append_array(rest)
+	return preferred
 
 
 # ---------------------------------------------------------------- 玩家名单
@@ -293,6 +459,7 @@ func _report_player(player: Player) -> void:
 func _on_hosting_started(p_port: int) -> void:
 	print("[session] %s，监听 %s" % ["专用服务端" if Net.is_dedicated() else "主机", _listen_label()])
 	_refresh_status()
+	_start_announcing()
 
 
 ## 端口 0 表示让系统分配空闲端口（自检用），此时不能用数字描述监听地址。
@@ -302,17 +469,24 @@ func _listen_label() -> String:
 
 func _on_join_succeeded() -> void:
 	print("[session] 已连接到主机")
-	_set_notice("已连接到主机，等待服务端生成本机角色")
+	_leave_menu_for_game()
+	_set_notice("已连接到主机，等待服务端生成本机角色。按 Esc 返回初始界面。")
 
 
 func _on_join_failed() -> void:
 	print("[session] 连接失败")
-	_set_notice("连接失败。核对地址与端口，并确认主机侧防火墙放行了该 UDP 端口。")
+	var message := "连接 %s 失败。核对地址与端口，并确认主机侧防火墙放行了该 UDP 端口。" % _join_target
+	_set_notice(message)
+	if DisplayServer.get_name() == "headless":
+		return
+	# 回到初始界面，保留已填的地址便于改一个数字重试。
+	_show_menu(_port)
+	_menu.set_message(message)
 
 
 func _on_server_left() -> void:
 	print("[session] 与主机断开")
-	_set_notice("与主机断开。")
+	_return_to_menu("与主机断开。可以重新选择一个房间，或由本机创建房间。")
 
 
 func _set_notice(text: String) -> void:
@@ -325,13 +499,19 @@ func _refresh_status() -> void:
 	match Net.role:
 		Net.Role.SERVER:
 			var kind := "专用服务端" if Net.is_dedicated() else "主机（本机也是玩家）"
-			lines.append("角色：%s，监听 %s" % [kind, _listen_label()])
+			var room := "，房间「%s」" % _room_name if not _room_name.is_empty() else ""
+			lines.append("角色：%s%s，监听 %s" % [kind, room, _listen_label()])
+			# 自动探测在正常情况下已经够用，这一行是给"探测不到"时口头报地址用。
+			var hint := _lan_hint()
+			if not hint.is_empty():
+				lines.append("其他机器手动加入时填：%s" % hint)
 		Net.Role.CLIENT:
-			lines.append("角色：客户端，已连接 UDP %d" % _port)
+			var target := _join_target if not _join_target.is_empty() else "UDP %d" % _port
+			lines.append("角色：客户端，已连接 %s" % target)
 		_:
 			lines.append("角色：尚未开始会话")
 	lines.append("本机 peer id：%d    其他 peer：%s" % [Net.local_id(), _describe_peers()])
-	lines.append("操作：A/D 移动，空格跳跃")
+	lines.append("操作：A/D 移动，空格跳跃    对局中按 Esc 返回初始界面")
 	if not _notice.is_empty():
 		lines.append(_notice)
 	_status.text = "\n".join(lines)
