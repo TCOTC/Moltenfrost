@@ -33,6 +33,10 @@ const FATAL_PATTERNS = [
   "Can't autoload",
 ];
 
+// 单个 --script 检查的上限（毫秒）。正常情况几秒内结束；
+// 给足余量的同时保证卡住时能快速失败而不是无限等待。
+const SCRIPT_TEST_TIMEOUT_MS = 120000;
+
 function parseArgs(argv) {
   const opts = {
     godot: process.env.GODOT_BIN || null,
@@ -194,12 +198,25 @@ function runScriptTest(godot, opts, { target, label, passPattern, userArgs = [] 
     args.push("--script", target);
   }
   if (userArgs.length > 0) args.push("--", ...userArgs);
-  const proc = spawnSync(godot, args, { cwd: PROJECT_DIR, encoding: "utf8" });
-  const output = `${proc.stdout || ""}${proc.stderr || ""}`;
+  // **必须给超时。** 检查脚本若卡住（例如调用了不存在的函数、报错之后没走到 quit），
+  // spawnSync 会永远等下去，于是整个冒烟测试也永远不结束——既没有输出也没有退出码，
+  // 看起来像"网络慢"而不是"脚本坏了"。实测踩过一次。
+  const res = spawnSync(godot, args, {
+    cwd: PROJECT_DIR,
+    encoding: "utf8",
+    timeout: SCRIPT_TEST_TIMEOUT_MS,
+  });
+  const output = `${res.stdout || ""}${res.stderr || ""}`;
   if (opts.verbose) process.stdout.write(output);
+  if (res.error && res.error.code === "ETIMEDOUT") {
+    throw new Error(
+      `${label}超过 ${SCRIPT_TEST_TIMEOUT_MS / 1000} 秒未结束，已中止。` +
+      `常见原因是脚本报错之后没有走到 quit()（检查它是否调用了不存在的函数）。\n${tail(output)}`,
+    );
+  }
   const fatal = FATAL_PATTERNS.find((p) => output.includes(p));
   if (fatal) throw new Error(`${label}的输出里出现「${fatal}」\n${tail(output)}`);
-  if (proc.status !== 0) throw new Error(`${label}退出码 ${proc.status}\n${tail(output)}`);
+  if (res.status !== 0) throw new Error(`${label}退出码 ${res.status}\n${tail(output)}`);
   const m = passPattern.exec(output);
   if (!m) throw new Error(`${label}没有报告通过\n${tail(output)}`);
   return Number(m[1]);
@@ -244,6 +261,16 @@ async function main() {
     passPattern: /初始界面接线测试通过（(\d+) 项断言）/,
   });
   assertions.push(`初始界面接线正确（${menuChecks} 项断言）`);
+
+  // 产品常量（config/product.cfg）的取值与回退。
+  // 单独一项检查的理由见那个文件的说明：读不到文件时会静默回退到与文件内容相同的兜底值，
+  // 于是不管走哪条路径界面都一样，只能靠断言来源来发现。
+  const configChecks = runScriptTest(godot, opts, {
+    target: "tests/product_config_test.gd",
+    label: "产品常量测试",
+    passPattern: /产品常量测试通过（(\d+) 项断言）/,
+  });
+  assertions.push(`产品常量读取与回退正确（${configChecks} 项断言）`);
 
   // 连一个没有服务端的地址。ENet 建客户端是即时的，要等超时才报 connection_failed，
   // 这段"正在连接"的窗口里若往尚未连接的 peer 发 RPC，引擎会每秒刷一条错误。

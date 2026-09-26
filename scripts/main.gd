@@ -111,6 +111,11 @@ func _start_session() -> void:
 	Player.autopilot_stop = opts.has("autopilot_stop")
 	# 把生效的启动参数写进日志，便于对照两台机器上分别启动了什么。
 	print("[session] 启动参数：%s" % opts)
+	# 产品级可变量（官方房间地址等）在启动时读一次，并把生效值打出来。
+	# 与 [feel] 行同一个道理：外部配置文件最容易出的问题是"改了但没生效"，
+	# 而一行日志就能把它变成一眼可见；不打印的话只能靠打开界面看列表才知道。
+	ProductConfig.load_from_disk()
+	print("[config] 官方房间：%s" % ProductConfig.describe())
 	_report_feel()
 
 	if opts.has("join"):

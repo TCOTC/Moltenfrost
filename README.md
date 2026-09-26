@@ -82,8 +82,8 @@ node tools/deploy-server.mjs --host <公网IP> --advertise <域名> --skip-godot
 ```
 
 服务器上跑的是**同一份工程源码**（服务器只需要 Godot 的 Linux 二进制与仓库）。
-界面上那个固定条目“官方房间”默认指向 `moltenfrost-server.mytemos.com`，改域名要改
-`scripts/menu.gd` 的 `OFFICIAL_HOST` 与 `tests/menu_test.gd` 里刻意重复写的那一份。
+界面上那个固定条目“官方房间”指向的产品常量在 **`config/product.cfg`**，
+换域名只改那一个文件（改完重启即生效，启动日志里 `[config]` 行会打出生效值与它的来源）。
 
 坑与取舍写在 `docs/服务端部署.md`，其中两条最容易白花时间：**服务器访问不了 GitHub**
 （实测连不上，加速代理也全不通，所有东西必须从本机上传），以及
