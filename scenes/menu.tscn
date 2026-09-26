@@ -1,0 +1,117 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/menu.gd" id="1_menu"]
+
+[node name="Menu" type="CanvasLayer"]
+layer = 2
+visible = false
+script = ExtResource("1_menu")
+
+[node name="Dim" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.043137, 0.05098, 0.070588, 0.941176)
+
+[node name="Center" type="CenterContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="Center"]
+
+[node name="Margin" type="MarginContainer" parent="Center/Panel"]
+theme_override_constants/margin_left = 36
+theme_override_constants/margin_top = 30
+theme_override_constants/margin_right = 36
+theme_override_constants/margin_bottom = 30
+
+[node name="Box" type="VBoxContainer" parent="Center/Panel/Margin"]
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="Center/Panel/Margin/Box"]
+theme_override_colors/font_color = Color(0.97, 0.78, 0.55, 1)
+theme_override_font_sizes/font_size = 44
+text = "熔霜"
+horizontal_alignment = 1
+
+[node name="Subtitle" type="Label" parent="Center/Panel/Margin/Box"]
+theme_override_colors/font_color = Color(0.6, 0.66, 0.78, 1)
+theme_override_font_sizes/font_size = 16
+text = "双人元素协同解谜 · 局域网联机"
+horizontal_alignment = 1
+
+[node name="Gap" type="Control" parent="Center/Panel/Margin/Box"]
+custom_minimum_size = Vector2(0, 6)
+
+[node name="RoomsLabel" type="Label" parent="Center/Panel/Margin/Box"]
+theme_override_font_sizes/font_size = 18
+text = "局域网中的房间（自动探测）"
+
+[node name="Rooms" type="ItemList" parent="Center/Panel/Margin/Box"]
+custom_minimum_size = Vector2(620, 170)
+theme_override_font_sizes/font_size = 18
+allow_reselect = true
+
+[node name="RoomButtons" type="HBoxContainer" parent="Center/Panel/Margin/Box"]
+theme_override_constants/separation = 10
+
+[node name="Refresh" type="Button" parent="Center/Panel/Margin/Box/RoomButtons"]
+custom_minimum_size = Vector2(150, 42)
+text = "重新探测"
+
+[node name="Join" type="Button" parent="Center/Panel/Margin/Box/RoomButtons"]
+custom_minimum_size = Vector2(220, 42)
+text = "加入选中的房间"
+
+[node name="Divider1" type="HSeparator" parent="Center/Panel/Margin/Box"]
+
+[node name="HostLabel" type="Label" parent="Center/Panel/Margin/Box"]
+theme_override_font_sizes/font_size = 18
+text = "创建房间（在本机启动服务端，其他人可从上面的列表加入）"
+
+[node name="HostRow" type="HBoxContainer" parent="Center/Panel/Margin/Box"]
+theme_override_constants/separation = 10
+
+[node name="RoomName" type="LineEdit" parent="Center/Panel/Margin/Box/HostRow"]
+custom_minimum_size = Vector2(400, 42)
+size_flags_horizontal = 3
+placeholder_text = "房间名"
+
+[node name="Host" type="Button" parent="Center/Panel/Margin/Box/HostRow"]
+custom_minimum_size = Vector2(160, 42)
+text = "创建房间"
+
+[node name="Divider2" type="HSeparator" parent="Center/Panel/Margin/Box"]
+
+[node name="DirectLabel" type="Label" parent="Center/Panel/Margin/Box"]
+theme_override_font_sizes/font_size = 18
+text = "手动连接（探测不到时直接填地址）"
+
+[node name="DirectRow" type="HBoxContainer" parent="Center/Panel/Margin/Box"]
+theme_override_constants/separation = 10
+
+[node name="Address" type="LineEdit" parent="Center/Panel/Margin/Box/DirectRow"]
+custom_minimum_size = Vector2(340, 42)
+size_flags_horizontal = 3
+placeholder_text = "主机地址，例如 192.168.5.210"
+
+[node name="Port" type="LineEdit" parent="Center/Panel/Margin/Box/DirectRow"]
+custom_minimum_size = Vector2(110, 42)
+placeholder_text = "端口"
+
+[node name="Direct" type="Button" parent="Center/Panel/Margin/Box/DirectRow"]
+custom_minimum_size = Vector2(120, 42)
+text = "加入"
+
+[node name="Status" type="Label" parent="Center/Panel/Margin/Box"]
+custom_minimum_size = Vector2(620, 52)
+theme_override_colors/font_color = Color(0.78, 0.83, 0.92, 1)
+theme_override_font_sizes/font_size = 16
+text = "正在探测局域网中的房间…"
+autowrap_mode = 3
+vertical_alignment = 2

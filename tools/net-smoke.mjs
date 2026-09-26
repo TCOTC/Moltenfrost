@@ -182,21 +182,26 @@ function tail(text, lines = 30) {
   return text.split(/\r?\n/).slice(-lines).join("\n");
 }
 
-// 插值逻辑测试。它不联网，但同样属于联机正确性：远端角色是否平滑取决于
-// 收到快照后的取样方式，而这一层可以用确定性的输入算出来。
-function runInterpolationTest(godot, opts) {
-  const proc = spawnSync(
-    godot,
-    ["--headless", "--path", PROJECT_DIR, "--script", "tests/remote_interpolator_test.gd"],
-    { cwd: PROJECT_DIR, encoding: "utf8" },
-  );
+// 纯逻辑检查：按 `--script` 或“以场景为入口”跑一个检查脚本，
+// 从输出里取“通过（N 项断言）”这一行。几个检查共用这段流程。
+// 以场景为入口的那一项要在 `--` 之后传参数，因此这里也支持 userArgs。
+function runScriptTest(godot, opts, { target, label, passPattern, userArgs = [] }) {
+  const args = ["--headless", "--path", PROJECT_DIR];
+  if (target.endsWith(".tscn")) {
+    // 以场景为入口：与真正的启动方式走同一条路径，自动加载单例因此可用。
+    args.push(target);
+  } else {
+    args.push("--script", target);
+  }
+  if (userArgs.length > 0) args.push("--", ...userArgs);
+  const proc = spawnSync(godot, args, { cwd: PROJECT_DIR, encoding: "utf8" });
   const output = `${proc.stdout || ""}${proc.stderr || ""}`;
   if (opts.verbose) process.stdout.write(output);
   const fatal = FATAL_PATTERNS.find((p) => output.includes(p));
-  if (fatal) throw new Error(`插值测试的输出里出现「${fatal}」\n${tail(output)}`);
-  if (proc.status !== 0) throw new Error(`插值测试退出码 ${proc.status}\n${tail(output)}`);
-  const m = /插值逻辑测试通过（(\d+) 项断言）/.exec(output);
-  if (!m) throw new Error(`插值测试没有报告通过\n${tail(output)}`);
+  if (fatal) throw new Error(`${label}的输出里出现「${fatal}」\n${tail(output)}`);
+  if (proc.status !== 0) throw new Error(`${label}退出码 ${proc.status}\n${tail(output)}`);
+  const m = passPattern.exec(output);
+  if (!m) throw new Error(`${label}没有报告通过\n${tail(output)}`);
   return Number(m[1]);
 }
 
@@ -216,8 +221,40 @@ async function main() {
   const timeoutMs = opts.timeout * 1000;
   const assertions = [];
 
-  const interpolationChecks = runInterpolationTest(godot, opts);
+  const interpolationChecks = runScriptTest(godot, opts, {
+    target: "tests/remote_interpolator_test.gd",
+    label: "插值测试",
+    passPattern: /插值逻辑测试通过（(\d+) 项断言）/,
+  });
   assertions.push(`插值取样保持均匀（${interpolationChecks} 项断言）`);
+
+  // 房间探测同样用真实的 UDP 走一遍：同一台机器上的两个实例要能互相发现，
+  // 这是"主机开房间、另一台在界面上选房"这条路径的最小可验证形式。
+  const discoveryChecks = runScriptTest(godot, opts, {
+    target: "tests/lan_discovery_test.gd",
+    label: "房间探测测试",
+    passPattern: /局域网房间探测测试通过（(\d+) 项断言）/,
+  });
+  assertions.push(`局域网房间探测可用（${discoveryChecks} 项断言）`);
+
+  // 初始界面的接线：按钮点下去有没有发出正确的信号。界面外观要人眼看，这一层只能自动验证。
+  const menuChecks = runScriptTest(godot, opts, {
+    target: "tests/menu_test.gd",
+    label: "初始界面测试",
+    passPattern: /初始界面接线测试通过（(\d+) 项断言）/,
+  });
+  assertions.push(`初始界面接线正确（${menuChecks} 项断言）`);
+
+  // 会话生命周期：创建房间 → 回到初始界面 → 再创建房间。
+  // 这一项以场景为入口，因为 `--script` 运行时不注册自动加载单例。
+  const sessionChecks = runScriptTest(godot, opts, {
+    target: "tests/session_test.tscn",
+    label: "会话生命周期测试",
+    passPattern: /会话生命周期测试通过（(\d+) 项断言）/,
+    // 入口脚本会按项目设置监听默认端口，而开发实例平时占着它。
+    userArgs: ["--port", "0"],
+  });
+  assertions.push(`会话可以重开且不残留角色（${sessionChecks} 项断言）`);
 
   const server = launch(godot, [...base, "--host", "--port", String(opts.port)], "服务端", opts);
   let client = null;

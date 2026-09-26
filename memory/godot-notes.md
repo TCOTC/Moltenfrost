@@ -2,6 +2,36 @@
 
 只记已经实测或从源码核实过的点。`AGENTS.md` 里只说结论，细节在这里。
 
+## `--script` 运行不注册自动加载单例（2026-09-26 实测）
+
+`<godot> --headless --path <项目> --script <脚本>` 把那个脚本当成 MainLoop，此时**自动加载单例
+（`project.godot` 里 `[autoload]` 注册的 `Net` 之类）不是可用的全局标识符**。现象是有欺骗性的两段式报错：
+
+```text
+SCRIPT ERROR: Compile Error: Identifier not found: Net      # 脚本自身
+ERROR: Failed to load script "res://scripts/main.gd" ...    # 被它间接加载的脚本
+```
+
+要注意这是**编译**期报错，而且发生在运行时注册之前：只报一次 `Identifier not found`，
+没有"未声明"之类的前置提示。实测三条：
+
+- 脚本里出现自动加载单例的**运行期成员**（例如 `Net.hosting_started`）就会编译失败，
+  `--script` 运行连 `preload` 入口场景都不行（`scripts/main.gd` 就是这么失败的）。
+- 只取自动加载的**常量**（例如 `Net.DEFAULT_PORT`）的脚本能在 `--script` 运行里编译通过：
+  `scripts/menu.gd` 只用到这一个常量，`tests/menu_test.gd` 因此能跑。
+  推测是常量在分析阶段被折叠，代码生成阶段不再需要那个标识符，但没有进一步核实。
+  由此得出一条判据：**“这个测试通过了”不等于“自动加载能用”**，必须真去取一个运行期成员。
+- 因此需要入口场景（要跑 `scripts/main.gd`）的检查只能用"以场景为入口"的方式跑。
+
+绕开的做法（本工程 `tests/session_test.gd` 用的）：把场景路径当位置参数启动，
+自动加载会在主场景之前注册，与真正的启动方式一致。
+
+```powershell
+& <godot> --headless --path <项目> res://tests/session_test.tscn -- --port 0
+```
+
+退出码取自场景脚本里的 `get_tree().quit(<码>)`（`--script` 的 `quit(<码>)` 同理）。
+
 ## 编辑器会重写文件（2026-09-23 实测）
 
 - `project.godot`：编辑器保存工程时整份重写。手写注释全部丢失（连头部说明都被换成 Godot 自己的模板），等于默认值的设置也会被删掉——例如显式写的 `renderer/rendering_method="forward_plus"` 就被移除了，因为 Forward+ 本来就是默认值。
