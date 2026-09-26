@@ -326,20 +326,68 @@ async function main() {
     assertions.push("两个实例均在运行且控制台无脚本错误");
 
     // 服务端被强制结束时，客户端必须自己能发现并给出提示。
-    // 这是最容易出问题的一条：进程没了不会发任何包，UDP 也没有 FIN 之类的收尾，
-    // 只能靠客户端自己判定。所以这里断言一个**上限**，避免以后改动把它拖成
-    // 几十秒的静默卡住（那种情况玩家分不清是卡住了还是对方退出了）。
+    // 进程没了不会发任何包，UDP 也没有 FIN 之类的收尾，只能由客户端的心跳判定兜住。
+    // 所以这里断言原因文案是"失去联系"，用来区分是心跳那条路径生效，
+    // 而不是被其他机制顺带掩盖过去。
     // stop() 在 Windows 上走 taskkill /F，等价于强杀，正是要模拟的场景。
     const killedAt = Date.now();
     stop(server);
-    await waitFor(client, "与主机断开", 20000);
+    await waitFor(client, "失去联系", 20000);
     const detectedSeconds = (Date.now() - killedAt) / 1000;
     if (detectedSeconds > 15) {
       throw new Error(
         `服务端被强制结束后客户端用了 ${detectedSeconds.toFixed(1)} 秒才发现，超过 15 秒上限`,
       );
     }
-    assertions.push(`服务端被强制结束后客户端在 ${detectedSeconds.toFixed(1)} 秒内判定下线`);
+    assertions.push(
+      `服务端被强制结束后由心跳判定下线（${detectedSeconds.toFixed(1)} 秒）`,
+    );
+
+    // 服务端**自行退出**（走 _exit_tree）时，客户端应当在心跳阈值之前就知道，
+    // 而不是等心跳兜底。这一条守住的是 close() 之前那次 poll()：
+    // 少了它，ENet 的断开通知会留在队列里随进程消失，功能上仍然"能用"
+    //（5 秒后心跳会发现），因此不会报错，只会让每次正常停服白等 5 秒。
+    // 用 --quit-after 让服务端自己走正常退出流程；它是引擎参数，必须放在 `--` 之前。
+    const gracefulPort = opts.port + 3;
+    const gracefulServer = launch(
+      godot,
+      ["--headless", "--path", PROJECT_DIR, "--quit-after", "1500", "--",
+       "--host", "--port", String(gracefulPort)],
+      "自行退出的服务端",
+      opts,
+    );
+    let gracefulClient = null;
+    try {
+      await waitFor(gracefulServer, "监听 UDP", timeoutMs);
+      gracefulClient = launch(
+        godot,
+        [...base, "--join", "127.0.0.1", "--port", String(gracefulPort)],
+        "等断开通知的客户端",
+        opts,
+      );
+      await waitFor(gracefulClient, "已连接到主机", timeoutMs);
+
+      // 等服务端自己退出。--quit-after 计的是帧数，无头下帧率不固定，因此只等结果。
+      const exitDeadline = Date.now() + 60000;
+      while (!gracefulServer.exited && Date.now() < exitDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      if (!gracefulServer.exited) throw new Error("服务端在 60 秒内没有自行退出");
+      const exitedAt = Date.now();
+
+      await waitFor(gracefulClient, "与主机断开", 20000);
+      const notifySeconds = (Date.now() - exitedAt) / 1000;
+      if (notifySeconds >= 5.0) {
+        throw new Error(
+          `服务端自行退出后，客户端用了 ${notifySeconds.toFixed(1)} 秒才发现，` +
+          `说明是心跳超时（5 秒）在兜底——检查 net.gd 的 shutdown_gracefully() 里那行 poll()。`,
+        );
+      }
+      assertions.push(`服务端自行退出时客户端不等心跳即发现（${notifySeconds.toFixed(1)} 秒）`);
+    } finally {
+      if (gracefulClient) stop(gracefulClient);
+      stop(gracefulServer);
+    }
 
     say("");
     for (const line of assertions) say(`  ok  ${line}`);

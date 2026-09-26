@@ -31,10 +31,9 @@ const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 // 出现这些字样即视为失败，不等待断言超时。
 const FATAL_PATTERNS = ["SCRIPT ERROR", "Parse Error", "Invalid access to property", "Invalid call"];
 
-// 与 scripts/net/net.gd 的 HEARTBEAT_TIMEOUT 对应。客户端自己判定下线要等这么久，
-// 因此"正常停止"的检测必须明显快于它，否则说明主动告知那条路径没生效。
+// 与 scripts/net/net.gd 的 HEARTBEAT_TIMEOUT 对应。客户端自己判定下线要等这么久；
+// 正常停止时走的是另一条路径（服务端发 goodbye），因此不该等到这么晚。
 const HEARTBEAT_TIMEOUT_MS = 5000;
-const GRACEFUL_BUDGET_MS = 3500;
 
 const HELP = `熔霜 · 联机服务器验收检查
 
@@ -231,13 +230,33 @@ async function main() {
     assertions.push(`客户端经 ${target} 连上服务器（${(connectMs / 1000).toFixed(1)} 秒）`);
 
     // RTT 只会在收到 pong 之后才有值，因此它同时证明双向都在通。
-    const rttMs = await waitForText(() => state.text, "RTT=", 8000);
-    if (rttMs < 0) throw new Error("客户端没有测出 RTT，说明与服务端之间没有双向数据");
-    const rttLine = state.text.split("\n").filter((l) => l.includes("RTT=")).pop() || "";
-    const rtt = /RTT=(\d+)/.exec(rttLine);
-    assertions.push(`测得公网 RTT ${rtt ? rtt[1] : "?"} ms`);
+    // 注意要等**数值**出现，而不是等 "RTT=" 出现：未测到时那一列写的是"测量中"，
+    // 只匹配前级会提前返回，然后解析出一个空值（实测踩过）。
+    const rttOk = await waitForText(
+      () => state.text, "RTT=", 8000,
+    );
+    let rttValue = null;
+    for (let i = 0; i < 40 && rttValue === null; i++) {
+      const lines = state.text.split("\n").filter((l) => l.includes("RTT="));
+      for (let j = lines.length - 1; j >= 0; j--) {
+        const m = /RTT=(\d+)\s*ms/.exec(lines[j]);
+        if (m) { rttValue = m[1]; break; }
+      }
+      if (rttValue === null) await sleep(250);
+    }
+    if (rttOk < 0 || rttValue === null) {
+      throw new Error("客户端没有测出 RTT，说明与服务端之间没有双向数据");
+    }
+    assertions.push(`测得公网 RTT ${rttValue} ms`);
 
-    // 5. 正常停止。计时从发出 stop 起，到客户端出现断开提示止。
+    // 5. 正常停止。**判据是时间短于心跳阈值**，而不是具体文案。
+    // 客户端可能通过两条路径得知下线：ENet 的断开通知（服务端 close 时发出）
+    // 与客户端自己的心跳超时。实测证明有效的是前者——曾经额外加过一个 reliable 的
+    // "goodbye" RPC 来主动告知，但断开通知会先到，把客户端转成 OFFLINE，
+    // 随后的 goodbye 被去重逻辑忽略掉了（所以按文案断言会误判）。
+    // 反过来，若 close 之前漏了那次 poll()，断开通知会留在队列里随进程消失，
+    // 客户端就只有等心跳兜底——功能上照常"能用"，因此时间断言才查得出这种退化。
+    // 计时含 ssh 握手与 systemctl 执行的开销，因此只当作量级参考。
     const seenBefore = (state.text.match(/与主机断开/g) || []).length;
     const stopStartedAt = Date.now();
     ssh(`sudo systemctl stop ${unit}`);
@@ -254,14 +273,15 @@ async function main() {
     if (detectedMs < 0) {
       throw new Error("服务端已停止，但客户端一直没报告断开");
     }
-    if (detectedMs > GRACEFUL_BUDGET_MS) {
+    if (detectedMs >= HEARTBEAT_TIMEOUT_MS) {
+      const tail = state.text.split("\n").filter((l) => l.includes("断开")).slice(-3).join("\n");
       throw new Error(
-        `客户端用了 ${(detectedMs / 1000).toFixed(1)} 秒才发现服务端停止，超过 ${(GRACEFUL_BUDGET_MS / 1000).toFixed(1)} 秒。\n` +
-        `这个时长说明是**心跳超时**在兜底（阈值 ${HEARTBEAT_TIMEOUT_MS / 1000} 秒），` +
-        `也就是服务端退出时没有主动告知客户端——检查 main.gd 的 _exit_tree 是否还调用了 Net.close()。`,
+        `客户端用了 ${(detectedMs / 1000).toFixed(1)} 秒才发现服务端停止，达到心跳阈值（${HEARTBEAT_TIMEOUT_MS / 1000} 秒）。\n` +
+        `说明是心跳在兜底，也就是服务端 close 之前那次 poll() 没让断开通知发出去——` +
+        `检查 net.gd 的 shutdown_gracefully()。\n客户端相关输出：\n${tail}`,
       );
     }
-    assertions.push(`服务端正常停止时客户端 ${(detectedMs / 1000).toFixed(1)} 秒内收到断开通知`);
+    assertions.push(`服务端正常停止时客户端不等心跳即发现（${(detectedMs / 1000).toFixed(1)} 秒，含 SSH 开销）`);
   } finally {
     if (!state.exited) {
       const kill = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
