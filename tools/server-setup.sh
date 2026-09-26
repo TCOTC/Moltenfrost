@@ -222,12 +222,32 @@ WantedBy=multi-user.target
 EOF
   sudo systemctl daemon-reload
   echo "installed ${SERVICE_NAME}@.service"
+
+  # **更新代码之后必须重启正在跑的服务。**
+  # 不重启的话进程里仍然是部署前那份代码，而磁盘上已经是新的——
+  # 这与"bundle 只含已提交内容"是同一类陷阱：改了、传了、看着都对，
+  # 但实际跑的不是那份代码。2026-09-26 就是这样白查了一轮：
+  # 服务端日志里报的错误来自一个已经删掉的 RPC，而 git 版本显示的是新代码。
+  # 只在服务已经在跑时重启；没跑就不要自作主张启动（部署与启动是两件事）。
+  if systemctl is-active --quiet "${SERVICE_NAME}@${PORT}"; then
+    echo "restarting ${SERVICE_NAME}@${PORT} to pick up the new code"
+    sudo systemctl restart "${SERVICE_NAME}@${PORT}"
+    sleep 3
+    systemctl is-active "${SERVICE_NAME}@${PORT}"
+  else
+    echo "${SERVICE_NAME}@${PORT} is not running; start it with:"
+  fi
   echo "  start:  sudo systemctl start ${SERVICE_NAME}@${PORT}"
   echo "  enable: sudo systemctl enable ${SERVICE_NAME}@${PORT}"
   echo "  logs:   journalctl -u ${SERVICE_NAME}@${PORT} -f"
   echo "  stop:   sudo systemctl stop ${SERVICE_NAME}@${PORT}"
 else
   say "6/6 systemd service skipped (--enable-service to install)"
+  if systemctl is-active --quiet "${SERVICE_NAME}@${PORT}" 2>/dev/null; then
+    echo "WARNING: ${SERVICE_NAME}@${PORT} is running but was NOT restarted,"
+    echo "         so it may still be running the previous code."
+    echo "         Restart it manually: sudo systemctl restart ${SERVICE_NAME}@${PORT}"
+  fi
 fi
 
 say "done"

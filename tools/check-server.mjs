@@ -186,6 +186,27 @@ async function main() {
     ssh(`sudo systemctl start ${unit}`);
   }
   ssh(`sudo systemctl is-active --quiet ${unit}`);
+
+  // **核对服务进程里的代码与仓库里的一致。**
+  // 进程的启动时间早于仓库最新提交时间，就说明它跑的是旧代码——
+  // 这种情况不报错、功能看着也正常，但新改的东西不会生效，极难排查。
+  // （2026-09-26 实测：部署只更新了文件，服务进程没重启，
+  // 于是日志里报的错误来自一个已经删掉的 RPC。）
+  const staleCheck = ssh(
+    `p=$(systemctl show -p MainPID --value ${unit}); ` +
+    `[ -n "$p" ] && [ "$p" != "0" ] || { echo no-pid; exit 0; }; ` +
+    `started=$(stat -c %Y /proc/$p 2>/dev/null || echo 0); ` +
+    `commit=$(git -C ~/moltenfrost log -1 --format=%ct); ` +
+    `if [ "$started" -lt "$commit" ]; then echo stale; else echo fresh; fi`,
+  );
+  if (staleCheck === "stale") {
+    throw new Error(
+      `服务进程启动于仓库最新提交之前，说明它在跑旧代码（进程没随部署重启）。\n` +
+      `重启后重跑本检查：ssh ${opts.user}@${opts.host} 'sudo systemctl restart ${unit}'`,
+    );
+  }
+  assertions.push("服务运行的代码与仓库一致");
+
   let listening = false;
   for (let i = 0; i < 30; i++) {
     // ss 在最小安装里可能没有，因此退回用 /proc/net/udp 判断。
