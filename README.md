@@ -74,11 +74,13 @@ node tools/net-smoke.mjs
 局域网内直接连 IP 就能验证协作手感。两台机器不在同一局域网时，走一台自建的公网服务端：
 
 ```powershell
+# 使用前先做一次：在 ~/.ssh/config 里加 Host moltenfrost（公网地址不入库，见 docs/服务端部署.md 第五节）
+
 # 完整部署（首次，或销毁重建之后）
-node tools/deploy-server.mjs --host <公网IP> --advertise <域名> --enable-service
+node tools/deploy-server.mjs --host moltenfrost --advertise <域名> --enable-service
 
 # 只更新代码
-node tools/deploy-server.mjs --host <公网IP> --advertise <域名> --skip-godot
+node tools/deploy-server.mjs --host moltenfrost --advertise <域名> --skip-godot
 ```
 
 服务器上跑的是**同一份工程源码**（服务器只需要 Godot 的 Linux 二进制与仓库）。
