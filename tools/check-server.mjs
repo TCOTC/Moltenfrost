@@ -16,7 +16,7 @@
 // 这里断言它短于心跳阈值，正是为了区分这两条路径。
 //
 // 用法：
-//   node tools/check-server.mjs --host 106.52.118.93 --advertise moltenfrost-server.mytemos.com
+//   node tools/check-server.mjs --host <公网IP> --advertise <域名>
 //
 // 退出码 0 表示全部通过。
 
@@ -87,14 +87,37 @@ function parseArgs(argv) {
 
 // 与 tools/net-smoke.mjs 里的同名函数一样：那边要能启动就好，这边同样只需要能启动。
 // 两处各自保留一份，避免为共用而牵动那个已经稳定的脚本。
+// 取值顺序见 memory/README.md：值只存在 memory/local-env.json，不入库。
+function localEnvJson() {
+  const file = path.join(PROJECT_DIR, "memory", "local-env.json");
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return {}; // 没这个文件是正常的
+  }
+  // 记事本与 PowerShell 5.1 的 Set-Content -Encoding utf8 会写 BOM，带 BOM 解不了。
+  try {
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (e) {
+    process.stderr.write(`${file} 不是合法 JSON（${e.message}），本次忽略它。\n`);
+    return {};
+  }
+}
+
 function detectGodot() {
+  const local = localEnvJson();
   const candidates = [];
-  if (process.env.GODOT_BIN) candidates.push(process.env.GODOT_BIN);
+  const pinned = process.env.GODOT_BIN || local.GODOT_BIN;
+  if (pinned) candidates.push(pinned);
   if (process.platform === "win32") {
     candidates.push("godot.exe", "godot4.exe");
-    try {
-      const root = "D:\\Tool\\Godot";
-      if (fs.existsSync(root)) {
+    // 解压即用的 Godot 不会出现在 PATH 里，要扫哪些目录由本机在 local-env.json 里自己声明。
+    const dirs = local.GODOT_SCAN_DIRS;
+    for (const root of Array.isArray(dirs) ? dirs : dirs ? [dirs] : []) {
+      try {
+        if (!fs.existsSync(root)) continue;
         for (const dir of fs.readdirSync(root)) {
           const full = path.join(root, dir);
           if (!fs.statSync(full).isDirectory()) continue;
@@ -102,8 +125,8 @@ function detectGodot() {
             if (/^Godot_v.*console\.exe$/i.test(f)) candidates.push(path.join(full, f));
           }
         }
-      }
-    } catch { /* 探不到就算了 */ }
+      } catch { /* 探不到就算了 */ }
+    }
   } else {
     candidates.push("godot", "godot4");
     for (const appDir of [

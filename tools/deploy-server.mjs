@@ -6,9 +6,9 @@
 // tools/server-setup.sh。最后一步做的事情都在那个脚本里，便于单独在服务器上复核。
 //
 // 用法：
-//   node tools/deploy-server.mjs --host 106.52.118.93
-//   node tools/deploy-server.mjs --host 106.52.118.93 --enable-service --port 27015
-//   node tools/deploy-server.mjs --host 106.52.118.93 --skip-godot   # 只更新代码
+//   node tools/deploy-server.mjs --host <公网IP>
+//   node tools/deploy-server.mjs --host <公网IP> --enable-service --port 27015
+//   node tools/deploy-server.mjs --host <公网IP> --skip-godot   # 只更新代码
 //
 // 默认值可用环境变量覆盖：MOLTENFROST_HOST、MOLTENFROST_SSH_KEY、MOLTENFROST_SSH_USER。
 //

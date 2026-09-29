@@ -11,7 +11,7 @@
 //
 // 用法：
 //   node tools/net-smoke.mjs
-//   node tools/net-smoke.mjs --godot "D:\Tool\Godot\4.7.2\Godot_v4.7.2-stable_win64_console.exe"
+//   node tools/net-smoke.mjs --godot <Godot 可执行文件>   # 不给则自动探测，取值顺序见 memory/README.md
 //   node tools/net-smoke.mjs --port 27016 --timeout 30 --verbose
 //
 // 退出码 0 表示全部断言通过。
@@ -77,15 +77,38 @@ const HELP = `熔霜 · 联机冒烟测试
 
 // 同一个探测逻辑在 tools/setup-dev-env.mjs 里也有一份，用于确定导出模板版本。
 // 两处用途不同（那边要版本号，这边只要能启动），暂时各自保留一份，避免为共用而牵动已稳定的脚本。
+// 两处遵守同一套取值顺序（见 memory/README.md）：值只存在 memory/local-env.json，不入库，
+// 因为别人的 Godot 装在哪与你无关。
+function localEnvJson() {
+  const file = path.join(PROJECT_DIR, "memory", "local-env.json");
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return {}; // 没这个文件是正常的
+  }
+  // 记事本与 PowerShell 5.1 的 Set-Content -Encoding utf8 会写 BOM，带 BOM 解不了。
+  try {
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (e) {
+    process.stderr.write(`${file} 不是合法 JSON（${e.message}），本次忽略它。\n`);
+    return {};
+  }
+}
+
 function detectGodot() {
+  const local = localEnvJson();
   const candidates = [];
-  if (process.env.GODOT_BIN) candidates.push(process.env.GODOT_BIN);
+  const pinned = process.env.GODOT_BIN || local.GODOT_BIN;
+  if (pinned) candidates.push(pinned);
   if (process.platform === "win32") {
     candidates.push("godot.exe", "godot4.exe");
-    // 本机把 Godot 装在 D:\Tool\Godot\<版本>\ 下，顺手也看一眼
-    try {
-      const root = "D:\\Tool\\Godot";
-      if (fs.existsSync(root)) {
+    // 解压即用的 Godot 不会出现在 PATH 里，要扫哪些目录由本机在 local-env.json 里自己声明。
+    const dirs = local.GODOT_SCAN_DIRS;
+    for (const root of Array.isArray(dirs) ? dirs : dirs ? [dirs] : []) {
+      try {
+        if (!fs.existsSync(root)) continue;
         for (const dir of fs.readdirSync(root)) {
           const full = path.join(root, dir);
           if (!fs.statSync(full).isDirectory()) continue;
@@ -93,8 +116,8 @@ function detectGodot() {
             if (/^Godot_v.*console\.exe$/i.test(f)) candidates.push(path.join(full, f));
           }
         }
-      }
-    } catch { /* 探不到就算了 */ }
+      } catch { /* 探不到就算了 */ }
+    }
   } else {
     candidates.push("godot", "godot4");
     for (const appDir of [

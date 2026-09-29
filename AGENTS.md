@@ -18,7 +18,10 @@
 
 ## 环境
 
-- Godot 4.7.2：`D:\Tool\Godot\4.7.2\Godot_v4.7.2-stable_win64_console.exe`
+- Godot 4.7.2。**本机绝对路径不要写进本仓库**：盘符与目录每个人都不同，写进来的人只觉得"本来就是这样"，
+  别人 clone 下来则是错的。取值顺序固定为 `GODOT_BIN` 环境变量 → `memory/local-env.json` → 自动探测，
+  首次探测成功会自动记进 `memory/local-env.json`（不入库），所以每台机器只需成功探测一次；
+  `node tools/setup-dev-env.mjs --print-godot` 只打印最终用到的那一份。怎么记、记在哪见 `memory/README.md`。
 - 目标平台：Windows（x86_64）与 macOS（产物是 Universal 2，但**只支持 Apple Silicon**）；不做网页版与移动端
 - 导出模板：`node tools/setup-dev-env.mjs --check` 看是否齐全，缺了就跑一次同名命令（不带 `--check`）
 - 工程内的距离与速度单位是**像素**，关卡以 64 px 为一方格（3D 版的“米”已废弃）。不要引入米与像素的换算层：多一层就多一次漏乘，而漏乘的后果是跳跃高度差几十倍。
@@ -49,7 +52,7 @@
 |---|---|
 | `config/` | 可变量：官方房间地址这类随部署变化的产品常量 |
 | `docs/` | 决策与依据（设计文档、命名与合规调研、服务端部署） |
-| `memory/` | 长期笔记，由 AI 自行维护，按主题一个文件 |
+| `memory/` | 长期笔记，由 AI 自行维护，按主题一个文件；本机环境记录 `local-env.json` 也在这（不入库） |
 | `scripts/`、`scenes/` | 代码与场景 |
 | `tools/` | 开发工具，必须跨平台，优先 Node 单实现 |
 | `build/` | 导出产物，不入库 |
@@ -61,8 +64,9 @@
 ## 交付前自检
 
 ```powershell
-& 'D:\Tool\Godot\4.7.2\Godot_v4.7.2-stable_win64_console.exe' --headless --path 'D:\CodeProjects\Moltenfrost' --quit-after 3 -- --port 0
+$godot = node tools/setup-dev-env.mjs --print-godot   # 路径来自 memory/local-env.json，见上「环境」
+& $godot --headless --path . --quit-after 3 -- --port 0
 node tools/net-smoke.mjs
 ```
 
-控制台无脚本错误再交给人试玩。动了联机相关代码则两条都跑，第二条无头起一个服务端与一个客户端，核对连接、角色生成与插值取样。`--port 0` 让系统分配空闲端口：不带参数时会监听 27015，那个端口平时开着开发实例就占用了，自检会以"无法监听"的报错形式失败。手感、音量、数值这类偏好由人判断，不要替人定。
+在仓库根执行。控制台无脚本错误再交给人试玩。动了联机相关代码则两条都跑，第二条无头起一个服务端与一个客户端，核对连接、角色生成与插值取样。`--port 0` 让系统分配空闲端口：不带参数时会监听 27015，那个端口平时开着开发实例就占用了，自检会以"无法监听"的报错形式失败。手感、音量、数值这类偏好由人判断，不要替人定。

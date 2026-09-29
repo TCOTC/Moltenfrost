@@ -15,6 +15,7 @@
 // 用法：
 //   node tools/setup-dev-env.mjs                 # 装本机平台的模板
 //   node tools/setup-dev-env.mjs --check         # 只看当前有没有装好，不下载
+//   node tools/setup-dev-env.mjs --print-godot   # 只打印本机 Godot 可执行文件的路径
 //   node tools/setup-dev-env.mjs --dry-run       # 只报要下载哪些文件、多大
 //   node tools/setup-dev-env.mjs --list          # 列出模板包里所有条目（排查用）
 //   node tools/setup-dev-env.mjs --platforms windows,macos
@@ -25,6 +26,9 @@
 //
 // 网络受限时可以用 MOLTENFROST_TPZ_URL 指向自建镜像。
 //
+// 本机 Godot 装在哪由 detectGodot() 取值，顺序见 memory/README.md；首次探测成功会
+// 自动记进 memory/local-env.json（不入库），所以每台机器只需要成功探测一次。
+//
 // 下载是并行分块的：每个条目按 --chunk-mib 切段，同时开 --concurrency 个连接去取。
 // 说明：在本机实测，到 GitHub CDN 的速度被压在 0.11 MiB/s 左右，开 6 个连接并不更快
 // （瓶颈是单 IP 限速，不是连接数）。所以默认并发取 4，网络状况不同时可以调。
@@ -34,10 +38,46 @@ import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_VERSION = "4.7.2";
 const DEFAULT_FLAVOR = "stable";
 const RELEASE_REPO = "godotengine/godot-builds";
+
+// 本机环境记录：每人的 Godot 装在哪不一样，写进入库的文件就会在别人机器上失效。
+// 所以值放 memory/local-env.json（已 gitignore），仓库里只有这份读取规则与 .example。
+// 字段说明见 memory/README.md。
+let localEnvWarned = false;
+
+function loadLocalEnv() {
+  const file = path.join(ROOT, "memory", "local-env.json");
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return {}; // 文件不存在是正常的：这台机器上还没成功探测过
+  }
+  // 记事本与 PowerShell 5.1 的 Set-Content -Encoding utf8 都会写 BOM，带 BOM 的
+  // JSON.parse 直接抛错。这里剥掉再解。
+  try {
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (e) {
+    // 绝不能静默返回 {}：那会变成"文件里明明写了、工具却说没写"，是最难查的一类故障。
+    if (!localEnvWarned) {
+      localEnvWarned = true;
+      process.stderr.write(`${file} 不是合法 JSON（${e.message}），本次忽略它。\n`);
+    }
+    return {};
+  }
+}
+
+function scanDirs(local) {
+  const raw = local.GODOT_SCAN_DIRS;
+  if (!raw) return [];
+  return (Array.isArray(raw) ? raw : [raw]).filter((d) => typeof d === "string" && d);
+}
 
 // 各平台需要的模板条目（tpz 内的名字，不含 templates/ 前缀）。
 // Windows 只要 x86_64：Intel 与 AMD 的 PC 都是这个架构。
@@ -84,6 +124,7 @@ function parseArgs(argv) {
     dir: null,
     list: false,
     check: false,
+    printGodot: false,
     dryRun: false,
     force: false,
     concurrency: Number(process.env.MOLTENFROST_CONCURRENCY || 4),
@@ -106,6 +147,7 @@ function parseArgs(argv) {
       case "--dir": opts.dir = next(); break;
       case "--list": opts.list = true; break;
       case "--check": opts.check = true; break;
+      case "--print-godot": opts.printGodot = true; break;
       case "--dry-run": opts.dryRun = true; break;
       case "--force": opts.force = true; break;
       case "--concurrency": opts.concurrency = Number(next()); break;
@@ -134,6 +176,8 @@ const HELP = `熔霜 · 开发环境初始化
   --dir <路径>        导出模板目录，默认按系统规则推算
   --list              列出模板包内所有条目
   --check             只检查已装情况
+  --print-godot       只打印本机 Godot 可执行文件的路径（取值顺序见 memory/README.md）
+                      首次探测成功会写进 memory/local-env.json（不入库）
   --dry-run           不写盘，只报计划
   --force             已存在且大小一致的也重下
   --concurrency <n>   并行连接数，默认 4（受限速影响时调大未必更快）
@@ -152,42 +196,82 @@ function parseGodotVersion(raw) {
 }
 
 function detectGodot() {
+  const local = loadLocalEnv();
+  // 候选按可信度排：环境变量 → 本机记录 → PATH 与常见安装位置。
+  // source 只用来区分"本机已经声明过的"与"这次才探到的"：后者需要回写记录。
+  // 声明过但用不了的不直接放弃，继续往下试，全试完再由调用方提示。
   const candidates = [];
-  if (process.env.GODOT_BIN) candidates.push(process.env.GODOT_BIN);
+  const failed = [];
+  const envPinned = process.env.GODOT_BIN ? { cmd: process.env.GODOT_BIN, source: "env" } : null;
+  const localPinned = local.GODOT_BIN ? { cmd: local.GODOT_BIN, source: "local" } : null;
+  if (envPinned) candidates.push(envPinned);
+  if (localPinned) candidates.push(localPinned);
   if (process.platform === "win32") {
-    candidates.push("godot.exe", "godot4.exe");
-    // 本机把 Godot 装在 D:\Tool\Godot\<版本>\ 下，顺手也看一眼
-    try {
-      const root = "D:\\Tool\\Godot";
-      if (fs.existsSync(root)) {
+    candidates.push({ cmd: "godot.exe", source: "probe" }, { cmd: "godot4.exe", source: "probe" });
+    // 解压即用的 Godot 不会出现在 PATH 里，所以允许本机自己声明要扫的目录。
+    // 目录值只存在 memory/local-env.json，仓库不猜任何人的安装位置。
+    for (const root of scanDirs(local)) {
+      try {
+        if (!fs.existsSync(root)) continue;
         for (const dir of fs.readdirSync(root)) {
           const full = path.join(root, dir);
           if (!fs.statSync(full).isDirectory()) continue;
           for (const f of fs.readdirSync(full)) {
-            if (/^Godot_v.*console\.exe$/i.test(f)) candidates.push(path.join(full, f));
+            if (/^Godot_v.*console\.exe$/i.test(f)) candidates.push({ cmd: path.join(full, f), source: "probe" });
           }
         }
-      }
-    } catch { /* 探不到就算了 */ }
+      } catch { /* 探不到就算了 */ }
+    }
   } else {
-    candidates.push("godot", "godot4");
+    candidates.push({ cmd: "godot", source: "probe" }, { cmd: "godot4", source: "probe" });
     // macOS 常见安装方式是 Godot.app，应用内的二进制不一定在 PATH 中。
     for (const appDir of [
       "/Applications/Godot.app",
       path.join(os.homedir(), "Applications", "Godot.app"),
     ]) {
-      candidates.push(path.join(appDir, "Contents", "MacOS", "Godot"));
+      candidates.push({ cmd: path.join(appDir, "Contents", "MacOS", "Godot"), source: "probe" });
     }
   }
 
-  for (const cmd of candidates) {
+  for (const cand of candidates) {
     try {
-      const out = execFileSync(cmd, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      const out = execFileSync(cand.cmd, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
       const parsed = parseGodotVersion(out);
-      if (parsed) return { ...parsed, binary: cmd };
-    } catch { /* 换下一个 */ }
+      if (parsed) return { ...parsed, binary: cand.cmd, source: cand.source, failed };
+    } catch { failed.push(cand); }
   }
   return null;
+}
+
+// 声明过的取值排在候选最前面，它被跳过就说明用不了。
+// 即使后面的候选接上了也要报出来：否则用户会以为自己的环境变量生效了。
+// PATH 里没有 godot.exe 是常态，这类不报，否则只是噪音。
+function reportSkippedGodot(found, note) {
+  for (const bad of (found && found.failed) || []) {
+    if (bad.source !== "env" && bad.source !== "local") continue;
+    const what = bad.source === "env" ? "GODOT_BIN 环境变量" : "memory/local-env.json 里的 GODOT_BIN";
+    note(`提示：读不到 ${what}（${bad.cmd}），已改用 ${found.binary}`);
+  }
+}
+
+// 探到就记下来：下次不必再扫，换会话也还在。环境变量只管当前终端，不管下一次。
+// 只写 memory/local-env.json（已 gitignore）。绝不把路径回写进入库的任何文件。
+function rememberGodot(found, note) {
+  if (!found || found.source !== "probe") return false;
+  // 走 PATH 命中的那种只是个命令名，记进去没有意义，下次照样走 PATH。
+  if (!path.isAbsolute(found.binary)) return false;
+  const local = loadLocalEnv();
+  if (local.GODOT_BIN === found.binary) return false;
+  const file = path.join(ROOT, "memory", "local-env.json");
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify({ ...local, GODOT_BIN: found.binary }, null, 2)}\n`, "utf8");
+    note(`已记到 memory/local-env.json（不入库，下次直接用它）：${found.binary}`);
+    return true;
+  } catch (e) {
+    note(`没能记下 Godot 路径（${e.message}），不影响本次运行。`);
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------- 路径
@@ -379,6 +463,23 @@ async function main() {
 
   const say = (msg) => process.stdout.write(`${msg}\n`);
 
+  // 只取值：给其他脚本与 AI 用。除这一行外不要有任何输出，否则调用方得去解析文本。
+  // 回写记录的话走 stderr：stdout 必须只有路径那一行，调用方要能直接拿去用。
+  if (opts.printGodot) {
+    const found = detectGodot();
+    if (!found) {
+      process.stderr.write(
+        "没找到 Godot。设置 GODOT_BIN，或在 memory/local-env.json 里写 GODOT_BIN / GODOT_SCAN_DIRS（格式见 local-env.example.json）。\n");
+      process.exitCode = 1;
+      return;
+    }
+    const skips = (msg) => process.stderr.write(`${msg}\n`);
+    reportSkippedGodot(found, skips);
+    rememberGodot(found, skips);
+    say(found.binary);
+    return;
+  }
+
   let version = opts.version;
   let flavor = opts.flavor;
   if (!version) {
@@ -387,6 +488,8 @@ async function main() {
       version = found.version;
       flavor = found.flavor;
       say(`检测到 Godot ${version}.${flavor}（${found.binary}）`);
+      reportSkippedGodot(found, say);
+      rememberGodot(found, say);
     } else {
       version = DEFAULT_VERSION;
       say(`没找到本机 Godot，按默认版本 ${DEFAULT_VERSION}.${DEFAULT_FLAVOR} 处理`);

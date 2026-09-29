@@ -1,0 +1,5 @@
+{
+  "_说明": "--print-godot 探测成功会自己写这份文件，通常不必手写；只有探不到时才照这里手填。两个字段都可省，取值顺序见 memory/README.md。",
+  "GODOT_BIN": "C:\\Program Files\\Godot\\Godot_v4.7.2-stable_win64_console.exe",
+  "GODOT_SCAN_DIRS": ["D:\\Tool\\Godot"]
+}
