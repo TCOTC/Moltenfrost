@@ -36,6 +36,24 @@ extends CharacterBody2D
 ## 两个平滑参数是本次会话的配置，由入口脚本在启动时从命令行写入（见 main.gd）。
 ## 它们必须对所有实例生效，而实例是运行时生成的，所以放在静态变量上；
 ## 每台机器各自从自己的命令行取值，因此两台机器可以分别调试而不必重启对方。
+##
+## 关于元素与死亡（见 docs/机制与玩法设计.md 2.1、2.2、2.5）：
+##   element 由服务端在生成时写入，之后只在**交换角色**时由服务端改。
+##   它单独用一个 MultiplayerSynchronizer（场景里的 ElementSync，权威固定为服务端），
+##   而不是挤进主 Sync：主 Sync 的权威是各自那个 peer（位置必须如此），
+##   而元素是服务端说了算的，两者混在一个同步器里会让服务端改不动它。
+##
+##   "踩到致命介质"这条路走的是**本机判定、上报服务端**：判定用的脚点位置是我自己
+##   模拟出来的，走服务端就要每帧一个来回。表现上也是先死了再说，不等回话。
+##   判定几何在 Game._check_hazard，因为那里同时拿着关卡与规则表。
+##
+##   技能与交换角色只发请求（Game.use_skill / request_swap），
+##   世界变化一律由服务端执行后广播——造出来的冰两端必须落在同一个位置。
+
+## 元素。取值见 Element.Kind。服务端权威，见上面的说明。
+var element: int = Element.Kind.MOLTEN
+## 出生槽位。由生成参数带过来，关卡重开时用它决定从哪里开始。
+var spawn_slot: int = 0
 
 ## 水平移动速度（px/s）。2026-09-26 两次上调：220 → 360 → 480，
 ## 按 64 px 一方格即 3.4 → 5.6 → 7.5 格/秒。
@@ -75,6 +93,10 @@ const COYOTE_TIME := 0.1
 ## 跳跃输入缓冲（秒）：落地之前按下的跳跃会在落地那一帧生效。0 表示关闭。
 ## 实测：下降末期按下后，落地当帧竖直速度即转为约 -1160（正常起跳）。
 const JUMP_BUFFER := 0.12
+## 碰撞箱半高（脚本里多处要它：脚点、复活抬升、推动判定）。
+## 它必须与 scenes/player.tscn 里 RectangleShape2D 的 96 高一致——
+## 对不上时表现是"站在地上却显示悬空"，或者站到冰面上立刻判成落水。
+const HALF_HEIGHT := 48.0
 ## 自动驾驶的路线：沿 X 轴在 ±AUTOPILOT_END 之间往返。
 ## 2D 只有一条地面线，而两人互不碰撞，所以不需要像 3D 版那样给每人分配一条独立车道。
 ## 端点取值避开场景里的台阶（台阶右表面在 x=-432 处）。
@@ -97,9 +119,23 @@ var _autopilot_forward: bool = true
 var _coyote: float = 0.0
 var _jump_buffer: float = 0.0
 
-## 仅用于双人测试时分清谁是谁，正式的角色美术与元素表现另做。
-const MOLTEN_COLOR := Color(1.0, 0.42, 0.12)
-const FROST_COLOR := Color(0.36, 0.82, 0.98)
+## 是否已阵亡。各端各自维护，由 Game 的广播与本地判定共同写入。
+## 阵亡期间不模拟（set_physics_process(false)），因此会有很短一段时间
+## 本机角色的位置停止更新——这正是要的：他不动了，队友看到的就是"他没了"。
+var _dead: bool = false
+## 技能键是否处于"必须先抬起"的状态。交换角色之后置位，见机制与玩法设计 2.3 第 7 条：
+## 交换后按住不放不会自动触发新角色的技能，否则按住技能键连按交换键就能扫过两个角色的技能。
+var _skill_latched: bool = false
+## 落地冲击带来的额外压扁量，逐帧衰减回 0。只影响观感。
+var _land_squash: float = 0.0
+## 上一帧是否在地面上，用来捕捉"落地那一帧"。
+var _was_on_floor: bool = true
+## 上一步的显示位置，用于远端角色推断朝向（远端拿不到输入方向）。
+var _facing_from: Vector2 = Vector2.ZERO
+
+## 上一组手感数值用的角色颜色常量已由 Element 接管，见 scripts/element.gd。
+## 这里保留一句指路：正式的角色美术在 scripts/character_art.gd，
+## 那个文件里解释了为什么两个角色的形状必须不一样。
 
 ## 由 MultiplayerSpawner 的生成函数写入，各方取到的是同一个值。
 var peer_id: int = 1
@@ -154,10 +190,17 @@ var _change_gap_max: float = 0.0
 var _recv_dips: StepAnalyzer = StepAnalyzer.new()
 var _disp_dips: StepAnalyzer = StepAnalyzer.new()
 
-@onready var _body: Polygon2D = $Visual/Body
+@onready var _art: CharacterArt = $Visual/Art
 @onready var _visual: Node2D = $Visual
 @onready var _camera: Camera2D = $Camera
 @onready var _sync: MultiplayerSynchronizer = $Sync
+@onready var _collision: CollisionShape2D = $Collision
+
+## 关卡规则层（scripts/game/game.gd）。用组查找而不是从父节点上写一条固定路径：
+## 角色是运行时生成的，挂到哪个父节点下取决于会话怎么开的，而组查找只依赖
+## "场上有一个 Game"这一件事。找不到时（例如单独打开 player.tscn 试手感）
+## 角色仍然能走能跳，只是没有介质判定与技能。
+var _game: Game = null
 
 
 func _enter_tree() -> void:
@@ -171,7 +214,20 @@ func _enter_tree() -> void:
 
 func _ready() -> void:
 	_local = peer_id == multiplayer.get_unique_id()
-	_apply_element_color()
+	# 元素同步器的权威必须固定为服务端。_enter_tree 里那次 set_multiplayer_authority
+	# 是**递归**的，会把两个同步器一起改成这个 peer；位置同步器本来就该归这个 peer，
+	# 但元素是服务端说了算的（交换角色由它串行处理），跟着改成客户端之后，
+	# 服务端写什么都不会传出去——症状是"交换角色没有反应"，且不报任何错。
+	# 放在 _ready 而不是 _enter_tree，是因为子节点那时还没进树，改不了权限。
+	var element_sync := get_node_or_null("ElementSync") as MultiplayerSynchronizer
+	if element_sync != null:
+		element_sync.set_multiplayer_authority(1)
+	# 加进组是给两条路用的：Game 找本机角色，以及冰块找"谁在推我"。
+	# 两处都用组而不是节点路径，因为角色的父节点随会话而异。
+	add_to_group("player")
+	_game = get_tree().get_first_node_in_group("game") as Game
+	_apply_element()
+	_facing_from = global_position
 	# 只有本机的角色参与模拟；显示帧则两边都要处理，本机用于相机跟随，远端用于插值。
 	set_physics_process(_local)
 	set_process(true)
@@ -201,11 +257,14 @@ func _ready() -> void:
 		# 表现为缓冲被一次性推远、钟速长时间卡在上限。
 		# 第一个同步包到达时自然会建立时间轴；在那之前 _process 直接用收到的位置显示。
 	if _local:
-		print("[player] 本机角色 peer=%d 已就位" % peer_id)
+		print("[player] 本机角色 peer=%d 已就位（%s）" % [peer_id, Element.kind_name(element)])
 	else:
 		# 把生效方式写进日志，目的是让"本机跑的是不是这套平滑代码"一眼可查。
-		print("[player] 远端角色 peer=%d 已就位（时钟调速平滑，水位 %.0f ms）" % [
+		# 元素也一并打出来：它是随生成包一起到的，因此这一行同时验证了
+		# "各端算出的元素一致"——不一致时两个人看到的是两套规则，且不会报任何错。
+		print("[player] 远端角色 peer=%d 已就位（%s，时钟调速平滑，水位 %.0f ms）" % [
 			peer_id,
+			Element.kind_name(element),
 			(interp_buffer if interp_buffer > 0.0 else RemoteInterpolator.DEFAULT_BUFFER) * 1000.0,
 		])
 		if _interp == null:
@@ -216,6 +275,9 @@ func _physics_process(delta: float) -> void:
 	if _local:
 		# 与位置同步更新，因此两者描述的是同一个时刻。
 		sync_time = Time.get_ticks_msec()
+
+	if _local and _game != null:
+		_read_action_input()
 
 	# 跳跃的两个宽容窗口。先记下"这一帧按下过"，这样落地前一帧按下的跳跃会在落地那一帧生效。
 	if Input.is_action_just_pressed("jump"):
@@ -273,7 +335,131 @@ func _process(delta: float) -> void:
 			_visual.position = displayed - position
 		else:
 			displayed = position
+	_update_art(delta, displayed)
 	_record_step(displayed)
+
+
+# ---------------------------------------------------------------- 元素、死亡与表现
+
+## 读技能键与交换键。只在物理帧、且只有本机角色会走到这里。
+##
+## 技能键要求"抬起再按下"：_skill_latched 在交换角色之后置位，
+## 而它只在按键完全松开时才解除。这与机制与玩法设计 2.3 第 7 条是同一件事：
+## 交换角色后按住不放不会顺带放出新角色的技能。
+func _read_action_input() -> void:
+	if not Input.is_action_pressed("skill"):
+		_skill_latched = false
+	elif Input.is_action_just_pressed("skill") and not _skill_latched:
+		_game.use_skill(self)
+	if Input.is_action_just_pressed("swap"):
+		_game.request_swap(peer_id)
+
+
+## 把元素写进外观。所有改 element 的地方都必须经过这里，
+## 否则会出现"颜色变了但形状还是上一个元素"这种半更新状态。
+func _apply_element() -> void:
+	if _art != null:
+		_art.set_element(element)
+
+
+## 由 Game 调用（服务端广播与本地判定两条路）。元素是服务端权威的，
+## 客户端不要自己去改它——两边各改一次的结果是"换回来了又换回去"。
+func set_element(kind: int) -> void:
+	if element == kind:
+		return
+	element = kind
+	_skill_latched = true
+	_apply_element()
+
+
+## 角色的中心点（世界坐标）。技能判定、检查点与积分的触发都用它。
+func center() -> Vector2:
+	return global_position
+
+
+## 脚点（碰撞箱底边中点）。介质判定用它，理由见 scripts/level/hazard.gd：
+## 熔站在浮于水面的冰上时，脚点在水面上方，因此不会被判成落水。
+func feet() -> Vector2:
+	return global_position + Vector2(0.0, HALF_HEIGHT)
+
+
+func is_dead() -> bool:
+	return _dead
+
+
+## 死亡。可被本地判定与服务端广播先后调用，因此必须幂等。
+func kill() -> void:
+	if _dead:
+		return
+	_dead = true
+	velocity = Vector2.ZERO
+	# 关掉碰撞：不能踩在别人头上、不能被手雷推开（2.5 里这些交互都建立在"他是个实体"上），
+	# 而一具还会挡路的尸体比看不见他更让人困惑。
+	_collision.set_deferred("disabled", true)
+	if _art != null:
+		_art.set_dead(true)
+	set_physics_process(false)
+
+
+## 复活到指定位置。位置由服务端决定（它记着每个人到过的最后一个检查点），
+## 但写进去的是**角色自己那台机器**——位置是各自权威的，别人写会被覆盖。
+func revive(at: Vector2) -> void:
+	_dead = false
+	_collision.set_deferred("disabled", false)
+	if _art != null:
+		_art.set_dead(false)
+	if _local:
+		position = at
+		velocity = Vector2.ZERO
+		# 落地那一帧的形变状态也清掉：从上一处地方带过来的压扁量会在新位置弹一下。
+		_land_squash = 0.0
+		_was_on_floor = false
+	set_physics_process(_local)
+	if _interp != null:
+		# 插值器里还留着"死亡之前那一处"的样本，不清掉的话远端角色会从旧位置滑过来。
+		_interp.reset()
+		if interp_buffer > 0.0:
+			_interp.buffer = interp_buffer
+			_interp.adaptive = false
+		# 直接把显示子节点挪到新位置：远端角色真正的 position 要等下一个同步包才更新，
+		# 那之前如果不动，画面里就会看到他从原地滑过去。同步包一到，_process 会用
+		# 插值结果覆盖这个偏移（那时它已经等于新位置，偏移自然回到 0）。
+		_visual.position = at - position
+
+
+## 每帧更新外观：朝向、起跳拉伸、落地压扁。
+## 这里只写 CharacterArt 自己的属性，不碰 position——远端角色的显示位置由
+## RemoteInterpolator 写在父节点 Visual 上，两者写同一处会互相覆盖。
+func _update_art(delta: float, displayed: Vector2) -> void:
+	if _art == null:
+		return
+	if _local:
+		var direction := Input.get_axis("move_left", "move_right")
+		if absf(direction) > 0.01:
+			_art.facing = 1 if direction > 0.0 else -1
+	else:
+		# 远端拿不到输入方向，只能用位移方向反推。阈值取 0.5 px：
+		# 显示位置每帧前进 4 px 左右，抖动不会超过这个数。
+		var moved := displayed.x - _facing_from.x
+		if absf(moved) > 0.5:
+			_art.facing = 1 if moved > 0.0 else -1
+	_facing_from = displayed
+
+	var on_floor := is_on_floor()
+	if _local:
+		if on_floor and not _was_on_floor:
+			# 落地那一帧按下落速度决定压扁多少。取速度而不是高度：
+			# 高度要额外记录一次起跳位置，而速度本来就有，且它直接就是冲击强度。
+			_land_squash = clampf(absf(velocity.y) / 2600.0, 0.0, 0.26)
+		_was_on_floor = on_floor
+
+	var target := 1.0
+	if not on_floor:
+		# 空中按竖直速度拉长：越接近最高点越接近原状（速度小），
+		# 因此"跳起来"与"落下来"中间会有一个自然的过渡，而不是整段都在拉长。
+		target = 1.0 + clampf(absf(velocity.y) / 3200.0, 0.0, 0.14)
+	_land_squash = maxf(_land_squash - delta * 2.2, 0.0)
+	_art.stretch = target * (1.0 - _land_squash)
 
 
 ## 统计显示帧之间位置有没有变化与有没有倒退。对两边的角色都做，因为成因不同：
@@ -397,9 +583,3 @@ func _describe_context(step: float) -> String:
 		"是" if _interp.is_holding() else "否",
 		_interp.seconds_since_unique() * 1000.0,
 	]
-
-
-func _apply_element_color() -> void:
-	# 一号位是「熔」，其余是「霜」。颜色写在视觉子节点上，判定节点不动。
-	# 正式的角色美术与元素表现另做，这里只是让人能分清谁是谁。
-	_body.modulate = MOLTEN_COLOR if peer_id == 1 else FROST_COLOR

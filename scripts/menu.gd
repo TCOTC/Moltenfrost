@@ -2,6 +2,12 @@ class_name MainMenu
 extends CanvasLayer
 ## 初始界面：探测局域网中的房间、创建房间、加入房间。
 ##
+## 版面上是一块标题区（熔/霜两个字分色）+ 两栏主体（左"加入一局"、右"开一局"）+ 一条页脚状态。
+## 这样排的理由是可读性而不是好看：**"加入"与"创建"是两件事，不该混在一列里**。
+## 原来那版把所有控件竖着堆在一起，第一次打开的人要逐行读才知道哪个按钮是干什么的；
+## 分栏之后左右各有一个标题与一句说明，扫一眼就能选。背景留下半透明的关卡画面，
+## 那既是"这是个游戏"的最直接信号，也顺带让两个分色的标题有了对应的实物。
+##
 ## 它只做两件事——把玩家选定的动作转成信号发出去，以及维护房间列表。
 ## 真正的会话由 scripts/main.gd 建立，因为"本机是主机的还是加入方"属于工程入口的职责，
 ## 界面与网络层都不该知道。这样分开也便于以后换成公网大厅：换掉房间的来源即可，
@@ -35,15 +41,15 @@ var _busy := false
 ## 列表里当前选中的房间，为空表示没有选中任何房间。
 var _selected: Dictionary = {}
 
-@onready var _rooms: ItemList = $Center/Panel/Margin/Box/Rooms
-@onready var _refresh: Button = $Center/Panel/Margin/Box/RoomButtons/Refresh
-@onready var _join: Button = $Center/Panel/Margin/Box/RoomButtons/Join
-@onready var _room_name: LineEdit = $Center/Panel/Margin/Box/HostRow/RoomName
-@onready var _host: Button = $Center/Panel/Margin/Box/HostRow/Host
-@onready var _address: LineEdit = $Center/Panel/Margin/Box/DirectRow/Address
-@onready var _port: LineEdit = $Center/Panel/Margin/Box/DirectRow/Port
-@onready var _direct: Button = $Center/Panel/Margin/Box/DirectRow/Direct
-@onready var _status: Label = $Center/Panel/Margin/Box/Status
+@onready var _rooms: ItemList = $Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox/Rooms
+@onready var _refresh: Button = $Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox/RoomButtons/Refresh
+@onready var _join: Button = $Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox/RoomButtons/Join
+@onready var _room_name: LineEdit = $Root/Layout/Body/HostPanel/HostMargin/HostBox/HostRow/RoomName
+@onready var _host: Button = $Root/Layout/Body/HostPanel/HostMargin/HostBox/HostRow/Host
+@onready var _address: LineEdit = $Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow/Address
+@onready var _port: LineEdit = $Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow/Port
+@onready var _direct: Button = $Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow/Direct
+@onready var _status: Label = $Root/Layout/Footer/Status
 
 ## 可禁用/可编辑的输入控件。创建或连接进行中会把它们锁上。
 var _inputs: Array[Control] = []
@@ -51,6 +57,13 @@ var _inputs: Array[Control] = []
 
 func _ready() -> void:
 	visible = false
+	# 主题在代码里构建（理由见 scripts/ui/game_theme.gd）。贴在 Root 上而不是场景里逐个
+	# 控件写覆盖：主题会向下传播，改一处颜色两栏一起变，不会出现"左边是新的、右边还是旧的"。
+	$Root.theme = GameTheme.build()
+	# 两个"主动作"用暖色实心按钮，与其它按钮拉开主次。
+	# 界面上的第一眼应该落在"开一局"与"进入选中的房间"上，而不是一排长得一样的按钮。
+	GameTheme.apply_primary(_join)
+	GameTheme.apply_primary(_host)
 	_inputs = [_refresh, _join, _host, _direct, _room_name, _address, _port]
 	# 探测逻辑是界面自己的子节点：界面关掉就不再接收广播，也就不会占用探测端口。
 	_discovery = LanDiscovery.new()

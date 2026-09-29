@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// 熔霜 · 联机冒烟测试
+// 熔霜 · 交付前自检
 //
-// 两段检查：
-//   1. 插值逻辑测试（tests/remote_interpolator_test.gd）：不联网，验证收到位置快照后的取样是否均匀。
-//   2. 双实例检查：无头起一个专用服务端与一个客户端，各断言一次连接与角色生成。
+// 三段检查，按"越基础越先跑"排列：
+//   1. 纯逻辑测试：插值取样、局域网房间探测、初始界面接线、产品常量、关卡判定几何。
+//      都不联网（前四项用 `--script`，关卡玩法那一项以场景为入口），单独跑也很有用。
+//   2. 关卡规则：把一关从头跑到尾——元素交换、死亡复活、造冰融冰、积分、通关、重开。
+//   3. 双实例检查：无头起一个专用服务端与一个客户端，各断言一次连接与角色生成。
 //
-// 它覆盖的是"连接是否建立、角色是否被生成并同步到对端、远端显示是否平滑"，
-// 不覆盖手感与延迟——那两件事只能由人在真机上判断，并配合网络损伤注入
-//（见 memory/networking.md）。
+// 它覆盖的是"连接是否建立、角色是否被生成并同步到对端、远端显示是否平滑、
+// 关卡规则本身是否自洽"，不覆盖手感与延迟——那两件事只能由人在真机上判断，
+// 并配合网络损伤注入（见 memory/networking.md），也不覆盖"两台机器看见的是不是同一张图"
+//（那需要两台机器一起跑，见 docs/机制与玩法设计.md）。
 //
 // 用法：
 //   node tools/net-smoke.mjs
@@ -295,6 +298,24 @@ async function main() {
   });
   assertions.push(`产品常量读取与回退正确（${configChecks} 项断言）`);
 
+  // 关卡的判定几何。不联网，但它是"看起来站在岸上、实际算在水里"这类错误的唯一防线，
+  // 因此放在联机检查之前——关卡摆错了，后面两条联机检查跑起来也没意义。
+  const levelChecks = runScriptTest(godot, opts, {
+    target: "tests/level_test.gd",
+    label: "关卡几何测试",
+    passPattern: /关卡几何测试通过（(\d+) 项断言）/,
+  });
+  assertions.push(`关卡判定几何自洽（${levelChecks} 项断言）`);
+
+  // 一关的规则跑一遍：元素分配与交换、致命介质→死亡→按检查点复活、造冰与融冰、
+  // 积分结算、两人同时进出口、关卡重开。以场景为入口，因为 `--script` 下没有自动加载单例。
+  const gameChecks = runScriptTest(godot, opts, {
+    target: "tests/game_test.tscn",
+    label: "关卡玩法测试",
+    passPattern: /关卡玩法测试通过（(\d+) 项断言）/,
+  });
+  assertions.push(`关卡规则自洽（${gameChecks} 项断言）`);
+
   // 连一个没有服务端的地址。ENet 建客户端是即时的，要等超时才报 connection_failed，
   // 这段"正在连接"的窗口里若往尚未连接的 peer 发 RPC，引擎会每秒刷一条错误。
   // 界面上填错地址是最常见的失败方式，所以这一段要有覆盖。
@@ -317,6 +338,34 @@ async function main() {
   }
   assertions.push("连接尚未建立时不刷 RPC 错误");
 
+  // 对局事件的送达。Game 的广播绕开了 Node.rpc()（逐 peer 调 rpc_id），
+  // 那条路不通时症状是"对端什么都看不到"且**不报任何错**——本地单机测试与
+  // 前面的单元测试都覆盖不到，只有两台一起跑才看得见，因此单独一项。
+  const probePort = opts.port + 2;
+  const probeScene = "res://tests/rpc_probe.tscn";
+  const probeServer = launch(
+    godot,
+    ["--headless", "--path", PROJECT_DIR, probeScene, "--", "--host", "--port", String(probePort)],
+    "RPC 探针服务端",
+    opts,
+  );
+  let probeClient = null;
+  try {
+    await waitFor(probeServer, "监听 UDP", timeoutMs);
+    probeClient = launch(
+      godot,
+      ["--headless", "--path", PROJECT_DIR, probeScene, "--",
+        "--join", "127.0.0.1", "--port", String(probePort)],
+      "RPC 探针客户端",
+      opts,
+    );
+    await waitFor(probeClient, "探针：客户端收到积分同步", timeoutMs);
+    assertions.push("对局事件能通过 _broadcast 送到对端");
+  } finally {
+    if (probeClient) stop(probeClient);
+    stop(probeServer);
+  }
+
   // 会话生命周期：创建房间 → 回到初始界面 → 再创建房间。
   // 这一项以场景为入口，因为 `--script` 运行时不注册自动加载单例。
   const sessionChecks = runScriptTest(godot, opts, {
@@ -328,7 +377,12 @@ async function main() {
   });
   assertions.push(`会话可以重开且不残留角色（${sessionChecks} 项断言）`);
 
-  const server = launch(godot, [...base, "--host", "--port", String(opts.port)], "服务端", opts);
+  const server = launch(
+    godot,
+    [...base, "--host", "--port", String(opts.port), "--element", "frost"],
+    "服务端",
+    opts,
+  );
   let client = null;
   try {
     await waitFor(server, "监听 UDP", timeoutMs);
@@ -355,6 +409,14 @@ async function main() {
     // 于是被判为本机角色。这一条同时说明 MultiplayerSynchronizer 已按预期注册。
     await waitFor(client, `本机角色 peer=${peerId} 已就位`, timeoutMs);
     assertions.push("客户端收到自己的角色（生成同步生效）");
+
+    // 元素随生成包一起送达。这里用 `--element frost` 把 0 号槽位指定成霜：
+    // 无头启动的服务端是**专用服务端**，本机没有角色，因此场上唯一的那个角色
+    // 就是客户端的，槽位为 0。固定住取值之后，"客户端看到的是霜"才是一条有内容的断言——
+    // 否则它只在默认分配下成立，而默认分配会随谁先连接而变。
+    // 元素不一致时两个人玩的是两张图，且不会报任何错，只能靠日志核对。
+    await waitFor(client, `本机角色 peer=${peerId} 已就位（霜）`, timeoutMs);
+    assertions.push("元素随生成包送达（--element 生效）");
 
     // 观察客户端角色的那一侧是服务端，所以平滑启用的证据要从服务端的日志里核对。
     // 这一条的价值在于区分"平滑没起作用"与"跑的是不带平滑的旧代码"——

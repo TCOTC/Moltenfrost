@@ -24,19 +24,26 @@ const MODE_SETTING := "display/window/size/mode"
 const PLAYER_SCENE := preload("res://scenes/player.tscn")
 const MENU_SCENE := preload("res://scenes/menu.tscn")
 ## 生成位置沿地面横向等距错开。槽位由服务端分配，因此不会出现两人重叠在同一个点。
-## 2D 只有一条地面线，所以是一维排布；间距取 96 px（角色宽 48 px，相当于留出一个身位）。
+## 关卡自己有 spawn_points 时以它为准（正常情况一律如此），这几个常量只是
+## 关卡还没载入时的兜底——那种情况只可能出现在单独启动 scenes/main.tscn 调试的时候。
 const SPAWN_SLOTS := 6
 const SPAWN_SPACING := 96.0
-## 出生高度。地面顶面在 y=0、角色半高 48，因此 -70 让角色开局位于离地 22 px 处然后自然落到地面，
-## 而不是与地面重叠后再被推出来（那会在第一帧产生一次假的位移尖峰，混进平滑诊断里）。
+## 出生高度。关卡的出生点是"角色中心应当出现的那个点"（离地 48 px 的半高再留一点余量），
+## 兜底值同理：让角色开局位于地面上方，自然落下，而不是与地面重叠后被推出来
+##（那会在第一帧产生一次假的位移尖峰，混进平滑诊断里）。
 const SPAWN_HEIGHT := -70.0
 ## --net-stats 的输出间隔。
 const STATS_INTERVAL := 2.0
+## --element 的临时覆盖，只作用于第一个槽位。单机试关时用它决定自己玩哪个元素；
+## 不传时按槽位交替分配（0 号熔、1 号霜），与设计文档「两人一熔一霜」的默认一致。
+var _element_override: int = -1
 
 @onready var _players: Node2D = $Players
 @onready var _spawner: MultiplayerSpawner = $Players/Spawner
-@onready var _hud: CanvasLayer = $HUD
-@onready var _status: Label = $HUD/Status
+@onready var _hud: GameHud = $HUD
+@onready var _status: Label = $HUD/Root/Status
+@onready var _game: Game = $Game
+@onready var _menu_camera: Camera2D = $MenuCamera
 
 ## 初始界面与房间广播器。两者分开：创建房间之后界面就退场了，
 ## 而广播要一直持续到对局结束（别人随时可能打开界面找房间）。
@@ -101,6 +108,8 @@ func _start_session() -> void:
 	Player.gravity = float(opts.get("gravity", Player.gravity))
 	# 显示水位可临时覆盖，用于对照（默认由 RemoteInterpolator 按链路自适应）。
 	Player.interp_buffer = float(opts.get("interp_buffer", 0.0))
+	# 单机试关时的元素指定。解析不出来时保持 -1（按槽位交替分配）。
+	_element_override = Element.parse(String(opts.get("element", "")))
 	# 物理帧率决定位置更新的粒度，因此也是同步流"信息率"的上限：
 	# 显示 120 fps 而物理 60 Hz 时，约一半的快照与上一份位置相同。
 	# 只在这里覆盖，不动 project.godot，因为它是对照实验用的开关。
@@ -155,8 +164,15 @@ func _report_feel() -> void:
 # ---------------------------------------------------------------- 会话与界面
 
 ## 显示初始界面。房间探测随之开始，HUD 让位（界面的底色是半透明的，留着会透出来）。
+##
+## 同时把镜头交给一台固定的菜单相机。没有相机时 2D 画面以世界原点为视口左上角，
+## 于是界面背后会是一块空处；交给菜单相机之后，背后是本关起点那一带的地形，
+## 界面的半透明底色能透出它来——这是"这是一个游戏"最省事的表达方式。
+## 对局中这台相机不参与：角色的相机会在它自己的 _ready 里 make_current 抢过去。
 func _show_menu(port: int) -> void:
 	_hud.visible = false
+	_menu_camera.enabled = true
+	_menu_camera.make_current()
 	_menu.open(port)
 
 
@@ -222,6 +238,12 @@ func _clear_players() -> void:
 		if child is Player:
 			child.queue_free()
 	_slots.clear()
+	# 这一局造出来的冰、被打掉的冰墙、被拾取的积分点也一起清掉：
+	# 它们是**这一局**的状态，不该跟着人走进下一个房间。
+	# 角色节点之所以要在这里手动清，也是同一个原因（客户端收不到服务端发来的销毁包，
+	# 因为连接已经断了），冰块同理——服务端已经不在了，没人会来告诉客户端删掉它们。
+	if _game != null:
+		_game.reset_for_new_session()
 
 
 ## 把本机房间广播到局域网，供其他人停在初始界面时看到。
@@ -309,6 +331,7 @@ func _on_peer_connected(id: int) -> void:
 	# 只有服务端负责生成角色，其余 peer 等生成包到达即可。
 	if Net.is_server():
 		_spawn_player(id)
+		_game.on_peer_joined(id)
 	_refresh_status()
 
 
@@ -317,6 +340,7 @@ func _on_peer_disconnected(id: int) -> void:
 	# 同样只有服务端负责销毁；这次销毁由 MultiplayerSpawner 同步给其余 peer。
 	if Net.is_server():
 		_slots.erase(id)
+		_game.on_peer_left(id)
 		var player := _players.get_node_or_null(_peer_node_name(id))
 		if player != null:
 			player.queue_free()
@@ -324,27 +348,40 @@ func _on_peer_disconnected(id: int) -> void:
 
 
 ## MultiplayerSpawner 的生成函数。各端都会用同一份参数调用它，
-## 因此 peer id 与槽位随生成包一起送达，不必再从节点名反推。
+## 因此 peer id、槽位与元素都随生成包一起送达，不必再从节点名反推。
 ## 注意这里只能依赖入参：各端要得出同一棵节点树，所以不能引用本机的临时状态。
 func _instantiate_player(data: Variant) -> Node:
 	var info: Dictionary = {}
 	if data is Dictionary:
 		info = data
 	var id := int(info.get("id", 1))
+	var slot := int(info.get("slot", 0))
 	var player := PLAYER_SCENE.instantiate() as Player
 	# 名字在同一父节点下必须唯一且合法：引擎用它在接收端重建同名节点，
 	# 而以 `@` 开头的自动生成名会被拒绝。
 	player.name = _peer_node_name(id)
 	player.peer_id = id
-	player.position = _slot_position(int(info.get("slot", 0)))
+	player.spawn_slot = slot
+	player.element = int(info.get("element", Element.Kind.MOLTEN))
+	player.position = _slot_position(slot)
 	return player
 
 
 func _spawn_player(id: int) -> void:
 	if _players.has_node(_peer_node_name(id)):
 		return
-	_spawner.spawn({"id": id, "slot": _allocate_slot(id)})
-	print("[session] 生成玩家 %d" % id)
+	var slot := _allocate_slot(id)
+	_spawner.spawn({"id": id, "slot": slot, "element": _element_for(slot)})
+	print("[session] 生成玩家 %d（槽位 %d，%s）" % [id, slot, Element.kind_name(_element_for(slot))])
+
+
+## 槽位对应的元素。默认 0 号熔、1 号霜，与设计文档 3.1 的"两人一熔一霜"一致；
+## 命令行给了 --element 时只改第一个槽位，方便单机试关。
+## 注意这只是**出生时**的分配：开局之后谁是什么由交换角色决定（机制与玩法设计 2.3）。
+func _element_for(slot: int) -> int:
+	if slot == 0 and _element_override >= 0:
+		return _element_override
+	return Element.Kind.MOLTEN if slot % 2 == 0 else Element.Kind.FROST
 
 
 ## 取当前未被占用的最小槽位。只在服务端调用，然后随生成参数告知各端。
@@ -359,9 +396,20 @@ func _allocate_slot(id: int) -> int:
 	return slot
 
 
+## 出生点。关卡载入之后一律用关卡自己的出生点：出生点属于关卡设计的一部分
+##（它决定了开局第一眼看到什么），写在关卡场景里才能随关卡一起调。
+## 下面的等距排布只是关卡还没载入时的兜底，避免"没有关卡就生成在原点"。
 func _slot_position(slot: int) -> Vector2:
+	if _game != null and _game.level != null:
+		return _game.level.spawn_point(slot)
 	var offset := (float(slot) - (float(SPAWN_SLOTS) - 1.0) * 0.5) * SPAWN_SPACING
 	return Vector2(offset, SPAWN_HEIGHT)
+
+
+## 初始界面是不是开着。Game 用它决定收不收对局内的按键——
+## 只有入口脚本知道界面在不在（界面是它建的），所以由这里回答，而不是让 Game 去翻菜单。
+func is_menu_open() -> bool:
+	return _menu != null and _menu.visible
 
 
 func _peer_node_name(id: int) -> String:
@@ -513,39 +561,45 @@ func _set_notice(text: String) -> void:
 
 
 func _refresh_status() -> void:
-	var lines := PackedStringArray()
+	var room := _room_line()
+	if _notice.is_empty():
+		_status.text = room
+		return
+	# 提示在上、连接状态在下：提示说的是"刚刚发生了什么"（连接失败、已离开房间），
+	# 状态说的是"现在是什么"，前者更紧急，因此放在第一行。
+	_status.text = "%s\n%s" % [_notice, room]
+
+
+## 连接状态压成一行。早先这里是四行（角色、对方该填的地址、peer id、按键说明），
+## 占了屏幕左上角一大块，看起来像调试覆盖层而不是游戏界面。
+## 按键说明在 HUD 底部另有一份，peer id 只有排查时才要看，两者都不该常驻。
+func _room_line() -> String:
 	match Net.role:
 		Net.Role.SERVER:
-			var kind := "专用服务端" if Net.is_dedicated() else "主机（本机也是玩家）"
-			var room := "，房间「%s」" % _room_name if not _room_name.is_empty() else ""
-			lines.append("角色：%s%s，监听 %s" % [kind, room, _listen_label()])
-			# 自动探测在正常情况下已经够用，这一行是给"探测不到"时口头报地址用。
+			var kind := "专用服务端" if Net.is_dedicated() else "主机"
+			var room := " · 房间「%s」" % _room_name if not _room_name.is_empty() else ""
+			# 这一段的用途是"探测不到时口头报地址"，因此它该显示的是对方要填什么。
 			var hint := _join_hint()
-			if not hint.is_empty():
-				lines.append("其他机器手动加入时填：%s" % hint)
+			var join := " · 对方加入填 %s" % hint if not hint.is_empty() else ""
+			return "%s%s · 在场 %s · 监听 %s%s" % [kind, room, _describe_peers(), _listen_label(), join]
 		Net.Role.CLIENT:
 			var target := _join_target if not _join_target.is_empty() else "UDP %d" % _port
-			lines.append("角色：客户端，已连接 %s" % target)
-		_:
-			lines.append("角色：尚未开始会话")
-	lines.append("本机 peer id：%d    其他 peer：%s" % [Net.local_id(), _describe_peers()])
-	lines.append("操作：A/D 移动，空格跳跃    对局中按 Esc 返回初始界面")
-	if not _notice.is_empty():
-		lines.append(_notice)
-	_status.text = "\n".join(lines)
+			return "客户端 · 已连接 %s" % target
+	return "尚未开始会话"
 
 
+## 在场的人。主机自己算一个，因此这里报的是"除本机以外的 peer"。
 func _describe_peers() -> String:
 	# 断开之后 multiplayer_peer 已被清空，此时查询 peer 列表会报错，所以先看会话状态。
 	if Net.role == Net.Role.OFFLINE:
 		return "无"
 	var ids := multiplayer.get_peers()
 	if ids.is_empty():
-		return "无"
+		return "1 人（只有本机）"
 	var parts := PackedStringArray()
 	for id in ids:
 		parts.append(str(id))
-	return ", ".join(parts)
+	return "%d 人（另有 peer %s）" % [ids.size() + 1, ", ".join(parts)]
 
 
 ## 退出时主动结束会话。

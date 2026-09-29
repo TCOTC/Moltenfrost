@@ -1,73 +1,170 @@
 [gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_ground"]
-size = Vector2(1600, 64)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_step"]
-size = Vector2(256, 64)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_wall"]
-size = Vector2(64, 512)
+[ext_resource type="Script" path="res://scripts/hud.gd" id="2_hud"]
+[ext_resource type="Script" path="res://scripts/game/game.gd" id="3_game"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
 
-[node name="Ground" type="StaticBody2D" parent="."]
-position = Vector2(0, 32)
+[node name="LevelHost" type="Node2D" parent="."]
 
-[node name="Collision" type="CollisionShape2D" parent="Ground"]
-shape = SubResource("RectangleShape2D_ground")
-
-[node name="Visual" type="Polygon2D" parent="Ground"]
-color = Color(0.22, 0.23, 0.27, 1)
-polygon = PackedVector2Array(-800, -32, 800, -32, 800, 32, -800, 32)
-
-[node name="Step" type="StaticBody2D" parent="."]
-position = Vector2(-560, -32)
-
-[node name="Collision" type="CollisionShape2D" parent="Step"]
-shape = SubResource("RectangleShape2D_step")
-
-[node name="Visual" type="Polygon2D" parent="Step"]
-color = Color(0.3, 0.31, 0.36, 1)
-polygon = PackedVector2Array(-128, -32, 128, -32, 128, 32, -128, 32)
-
-[node name="WallLeft" type="StaticBody2D" parent="."]
-position = Vector2(-832, -256)
-
-[node name="Collision" type="CollisionShape2D" parent="WallLeft"]
-shape = SubResource("RectangleShape2D_wall")
-
-[node name="Visual" type="Polygon2D" parent="WallLeft"]
-color = Color(0.3, 0.31, 0.36, 1)
-polygon = PackedVector2Array(-32, -256, 32, -256, 32, 256, -32, 256)
-
-[node name="WallRight" type="StaticBody2D" parent="."]
-position = Vector2(832, -256)
-
-[node name="Collision" type="CollisionShape2D" parent="WallRight"]
-shape = SubResource("RectangleShape2D_wall")
-
-[node name="Visual" type="Polygon2D" parent="WallRight"]
-color = Color(0.3, 0.31, 0.36, 1)
-polygon = PackedVector2Array(-32, -256, 32, -256, 32, 256, -32, 256)
+[node name="MenuCamera" type="Camera2D" parent="."]
+enabled = false
+position = Vector2(-448, -224)
+zoom = Vector2(0.82, 0.82)
 
 [node name="Players" type="Node2D" parent="."]
+z_index = 2
 
 [node name="Spawner" type="MultiplayerSpawner" parent="Players"]
 spawn_path = NodePath("..")
 
-[node name="HUD" type="CanvasLayer" parent="."]
+[node name="World" type="Node2D" parent="."]
+z_index = 3
 
-[node name="Status" type="Label" parent="HUD"]
-offset_left = 16.0
-offset_top = 12.0
-offset_right = 1000.0
-offset_bottom = 160.0
-theme_override_colors/font_color = Color(0.97, 0.98, 1, 1)
+[node name="IceSpawner" type="MultiplayerSpawner" parent="World"]
+spawn_path = NodePath("..")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("2_hud")
+
+[node name="Root" type="Control" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="LevelName" type="Label" parent="HUD/Root"]
+offset_left = 36.0
+offset_top = 22.0
+offset_right = 700.0
+offset_bottom = 58.0
+theme_override_colors/font_color = Color(0.972549, 0.784314, 0.552941, 1)
+theme_override_font_sizes/font_size = 26
+
+[node name="Status" type="Label" parent="HUD/Root"]
+offset_left = 36.0
+offset_top = 62.0
+offset_right = 1180.0
+offset_bottom = 124.0
+theme_override_colors/font_color = Color(0.674510, 0.721569, 0.803922, 1)
 theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
 theme_override_constants/shadow_offset_x = 1
 theme_override_constants/shadow_offset_y = 1
-theme_override_font_sizes/font_size = 20
+theme_override_font_sizes/font_size = 15
+autowrap_mode = 3
+
+[node name="Score" type="Label" parent="HUD/Root"]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -320.0
+offset_top = 24.0
+offset_right = -36.0
+offset_bottom = 60.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(1, 0.823529, 0.317647, 1)
+theme_override_font_sizes/font_size = 26
+horizontal_alignment = 2
+
+[node name="Elements" type="HBoxContainer" parent="HUD/Root"]
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 36.0
+offset_top = -110.0
+offset_right = 760.0
+offset_bottom = -72.0
+grow_vertical = 0
+theme_override_constants/separation = 32
+
+[node name="You" type="Label" parent="HUD/Root/Elements"]
+theme_override_font_sizes/font_size = 22
+
+[node name="Mate" type="Label" parent="HUD/Root/Elements"]
+theme_override_font_sizes/font_size = 22
+
+[node name="Hint" type="Label" parent="HUD/Root"]
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 36.0
+offset_top = -58.0
+offset_right = -36.0
+offset_bottom = -28.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.619608, 0.678431, 0.780392, 1)
+theme_override_font_sizes/font_size = 17
+horizontal_alignment = 1
+
+[node name="Toast" type="Label" parent="HUD/Root"]
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -460.0
+offset_top = -196.0
+offset_right = 460.0
+offset_bottom = -152.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_colors/font_color = Color(0.972549, 0.980392, 1, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 24
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Overlay" type="Control" parent="HUD/Root"]
+visible = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Dim" type="ColorRect" parent="HUD/Root/Overlay"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.027451, 0.039216, 0.058824, 0.741176)
+
+[node name="Title" type="Label" parent="HUD/Root/Overlay"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -500.0
+offset_top = -96.0
+offset_right = 500.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 0.85098, 0.447059, 1)
+theme_override_font_sizes/font_size = 58
+horizontal_alignment = 1
+
+[node name="Body" type="Label" parent="HUD/Root/Overlay"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -500.0
+offset_top = 12.0
+offset_right = 500.0
+offset_bottom = 56.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.807843, 0.858824, 0.945098, 1)
+theme_override_font_sizes/font_size = 22
+horizontal_alignment = 1
+
+[node name="Game" type="Node" parent="."]
+script = ExtResource("3_game")

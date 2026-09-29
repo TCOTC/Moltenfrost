@@ -1,117 +1,209 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/menu.gd" id="1_menu"]
+
+[sub_resource type="Gradient" id="Gradient_tint"]
+offsets = PackedFloat32Array(0, 0.34, 0.5, 0.66, 1)
+colors = PackedColorArray(0.466667, 0.141176, 0.031373, 0.313726, 0.047059, 0.054902, 0.082353, 0, 0.047059, 0.054902, 0.082353, 0, 0.047059, 0.054902, 0.082353, 0, 0.05098, 0.203922, 0.415686, 0.313726)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_tint"]
+gradient = SubResource("Gradient_tint")
+width = 512
+height = 4
+fill_from = Vector2(0, 0)
+fill_to = Vector2(1, 0)
 
 [node name="Menu" type="CanvasLayer"]
 layer = 2
 visible = false
 script = ExtResource("1_menu")
 
-[node name="Dim" type="ColorRect" parent="."]
+[node name="Backdrop" type="Control" parent="."]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.043137, 0.05098, 0.070588, 0.941176)
+mouse_filter = 2
 
-[node name="Center" type="CenterContainer" parent="."]
+[node name="Base" type="ColorRect" parent="Backdrop"]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
+color = Color(0.027451, 0.039216, 0.058824, 0.862745)
 
-[node name="Panel" type="PanelContainer" parent="Center"]
+[node name="Tint" type="TextureRect" parent="Backdrop"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = SubResource("GradientTexture2D_tint")
+expand_mode = 1
+stretch_mode = 0
 
-[node name="Margin" type="MarginContainer" parent="Center/Panel"]
-theme_override_constants/margin_left = 36
-theme_override_constants/margin_top = 30
-theme_override_constants/margin_right = 36
-theme_override_constants/margin_bottom = 30
+[node name="Root" type="MarginContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 72
+theme_override_constants/margin_top = 48
+theme_override_constants/margin_right = 72
+theme_override_constants/margin_bottom = 40
 
-[node name="Box" type="VBoxContainer" parent="Center/Panel/Margin"]
-theme_override_constants/separation = 10
+[node name="Layout" type="VBoxContainer" parent="Root"]
+theme_override_constants/separation = 14
 
-[node name="Title" type="Label" parent="Center/Panel/Margin/Box"]
-theme_override_colors/font_color = Color(0.97, 0.78, 0.55, 1)
-theme_override_font_sizes/font_size = 44
-text = "熔霜"
+[node name="TitleRow" type="HBoxContainer" parent="Root/Layout"]
+theme_override_constants/separation = 0
+alignment = 1
+
+[node name="Molten" type="Label" parent="Root/Layout/TitleRow"]
+theme_override_colors/font_color = Color(1, 0.478431, 0.164706, 1)
+theme_override_font_sizes/font_size = 84
+text = "熔"
+
+[node name="Frost" type="Label" parent="Root/Layout/TitleRow"]
+theme_override_colors/font_color = Color(0.427451, 0.843137, 0.988235, 1)
+theme_override_font_sizes/font_size = 84
+text = "霜"
+
+[node name="Subtitle" type="Label" parent="Root/Layout"]
+theme_override_colors/font_color = Color(0.639216, 0.694118, 0.792157, 1)
+theme_override_font_sizes/font_size = 18
+text = "双人元素协同解谜 · 多设备联机 · 一人熔一人霜，谁都不能单独走完"
 horizontal_alignment = 1
 
-[node name="Subtitle" type="Label" parent="Center/Panel/Margin/Box"]
-theme_override_colors/font_color = Color(0.6, 0.66, 0.78, 1)
-theme_override_font_sizes/font_size = 16
-text = "双人元素协同解谜 · 局域网联机"
-horizontal_alignment = 1
+[node name="Rule" type="HSeparator" parent="Root/Layout"]
 
-[node name="Gap" type="Control" parent="Center/Panel/Margin/Box"]
-custom_minimum_size = Vector2(0, 6)
+[node name="Body" type="HBoxContainer" parent="Root/Layout"]
+size_flags_vertical = 3
+theme_override_constants/separation = 24
 
-[node name="RoomsLabel" type="Label" parent="Center/Panel/Margin/Box"]
-theme_override_font_sizes/font_size = 18
-text = "局域网中的房间（自动探测）"
+[node name="RoomsPanel" type="PanelContainer" parent="Root/Layout/Body"]
+size_flags_horizontal = 3
 
-[node name="Rooms" type="ItemList" parent="Center/Panel/Margin/Box"]
-custom_minimum_size = Vector2(620, 170)
-theme_override_font_sizes/font_size = 18
+[node name="RoomsMargin" type="MarginContainer" parent="Root/Layout/Body/RoomsPanel"]
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 20
+
+[node name="RoomsBox" type="VBoxContainer" parent="Root/Layout/Body/RoomsPanel/RoomsMargin"]
+theme_override_constants/separation = 12
+
+[node name="RoomsTitle" type="Label" parent="Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox"]
+theme_override_colors/font_color = Color(0.972549, 0.784314, 0.552941, 1)
+theme_override_font_sizes/font_size = 22
+text = "加入一局"
+
+[node name="RoomsHint" type="Label" parent="Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox"]
+theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
+theme_override_font_sizes/font_size = 15
+text = "局域网里的房间会自动出现在下面；官方房间一直在列表最上面。"
+autowrap_mode = 3
+
+[node name="Rooms" type="ItemList" parent="Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox"]
+size_flags_vertical = 3
 allow_reselect = true
 
-[node name="RoomButtons" type="HBoxContainer" parent="Center/Panel/Margin/Box"]
+[node name="RoomButtons" type="HBoxContainer" parent="Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox"]
 theme_override_constants/separation = 10
 
-[node name="Refresh" type="Button" parent="Center/Panel/Margin/Box/RoomButtons"]
-custom_minimum_size = Vector2(150, 42)
+[node name="Refresh" type="Button" parent="Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox/RoomButtons"]
+custom_minimum_size = Vector2(150, 46)
 text = "重新探测"
 
-[node name="Join" type="Button" parent="Center/Panel/Margin/Box/RoomButtons"]
-custom_minimum_size = Vector2(220, 42)
-text = "加入选中的房间"
+[node name="Join" type="Button" parent="Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox/RoomButtons"]
+custom_minimum_size = Vector2(240, 46)
+size_flags_horizontal = 3
+text = "进入选中的房间"
 
-[node name="Divider1" type="HSeparator" parent="Center/Panel/Margin/Box"]
+[node name="HostPanel" type="PanelContainer" parent="Root/Layout/Body"]
+size_flags_horizontal = 3
 
-[node name="HostLabel" type="Label" parent="Center/Panel/Margin/Box"]
-theme_override_font_sizes/font_size = 18
-text = "创建房间（在本机启动服务端，其他人可从上面的列表加入）"
+[node name="HostMargin" type="MarginContainer" parent="Root/Layout/Body/HostPanel"]
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 20
 
-[node name="HostRow" type="HBoxContainer" parent="Center/Panel/Margin/Box"]
+[node name="HostBox" type="VBoxContainer" parent="Root/Layout/Body/HostPanel/HostMargin"]
+theme_override_constants/separation = 12
+
+[node name="HostTitle" type="Label" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
+theme_override_colors/font_color = Color(0.427451, 0.843137, 0.988235, 1)
+theme_override_font_sizes/font_size = 22
+text = "开一局"
+
+[node name="HostHint" type="Label" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
+theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
+theme_override_font_sizes/font_size = 15
+text = "创建房间就是在本机开一个服务端，本机自己也是玩家。对方在左侧列表里就能看到它。"
+autowrap_mode = 3
+
+[node name="HostRow" type="HBoxContainer" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
 theme_override_constants/separation = 10
 
-[node name="RoomName" type="LineEdit" parent="Center/Panel/Margin/Box/HostRow"]
-custom_minimum_size = Vector2(400, 42)
+[node name="RoomName" type="LineEdit" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox/HostRow"]
+custom_minimum_size = Vector2(0, 46)
 size_flags_horizontal = 3
 placeholder_text = "房间名"
 
-[node name="Host" type="Button" parent="Center/Panel/Margin/Box/HostRow"]
-custom_minimum_size = Vector2(160, 42)
+[node name="Host" type="Button" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox/HostRow"]
+custom_minimum_size = Vector2(170, 46)
 text = "创建房间"
 
-[node name="Divider2" type="HSeparator" parent="Center/Panel/Margin/Box"]
+[node name="Divider" type="HSeparator" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
 
-[node name="DirectLabel" type="Label" parent="Center/Panel/Margin/Box"]
+[node name="DirectTitle" type="Label" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
 theme_override_font_sizes/font_size = 18
-text = "手动连接（探测不到时直接填地址）"
+text = "直接填地址加入"
 
-[node name="DirectRow" type="HBoxContainer" parent="Center/Panel/Margin/Box"]
+[node name="DirectHint" type="Label" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
+theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
+theme_override_font_sizes/font_size = 15
+text = "跨网时局域网探测收不到对方，把主机给出的「地址:端口」填在这里。"
+autowrap_mode = 3
+
+[node name="DirectRow" type="HBoxContainer" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
 theme_override_constants/separation = 10
 
-[node name="Address" type="LineEdit" parent="Center/Panel/Margin/Box/DirectRow"]
-custom_minimum_size = Vector2(340, 42)
+[node name="Address" type="LineEdit" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow"]
+custom_minimum_size = Vector2(0, 46)
 size_flags_horizontal = 3
 placeholder_text = "主机地址，例如 192.168.5.210"
 
-[node name="Port" type="LineEdit" parent="Center/Panel/Margin/Box/DirectRow"]
-custom_minimum_size = Vector2(110, 42)
+[node name="Port" type="LineEdit" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow"]
+custom_minimum_size = Vector2(120, 46)
 placeholder_text = "端口"
 
-[node name="Direct" type="Button" parent="Center/Panel/Margin/Box/DirectRow"]
-custom_minimum_size = Vector2(120, 42)
+[node name="Direct" type="Button" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow"]
+custom_minimum_size = Vector2(120, 46)
 text = "加入"
 
-[node name="Status" type="Label" parent="Center/Panel/Margin/Box"]
-custom_minimum_size = Vector2(620, 52)
-theme_override_colors/font_color = Color(0.78, 0.83, 0.92, 1)
+[node name="Controls" type="Label" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
+size_flags_vertical = 3
+theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
+theme_override_font_sizes/font_size = 15
+text = "对局中
+A / D 移动    空格 跳跃    E 技能    Q 交换角色
+R 本关重来    Esc 回到这里"
+vertical_alignment = 2
+
+[node name="Footer" type="VBoxContainer" parent="Root/Layout"]
+theme_override_constants/separation = 6
+
+[node name="Status" type="Label" parent="Root/Layout/Footer"]
+custom_minimum_size = Vector2(0, 52)
+theme_override_colors/font_color = Color(0.780392, 0.831373, 0.921569, 1)
 theme_override_font_sizes/font_size = 16
 text = "正在探测局域网中的房间…"
 autowrap_mode = 3
-vertical_alignment = 2
+vertical_alignment = 1

@@ -212,21 +212,31 @@ func _finish() -> void:
 		quit(1)
 
 
-## 界面里的节点路径按 boxes 拼。写成一层 helper 是为了让断言读起来只剩节点名。
+## 界面里的节点路径按两栏拼。写成 helper 是为了让断言读起来只剩节点名：
+## 左边那一栏是房间列表与它的两个按钮，右边那一栏是创建与直接加入。
 func _line(path: String) -> LineEdit:
-	return _menu.get_node("Center/Panel/Margin/Box/" + path)
+	return _menu.get_node(_prefix(path) + path)
 
 
 func _button(path: String) -> Button:
-	return _menu.get_node("Center/Panel/Margin/Box/" + path)
+	return _menu.get_node(_prefix(path) + path)
+
+
+## 房间相关的控件在左栏，其余在右栏。
+## 判据取 "Room" 前缀而不是 "Rooms"：左栏里的按钮路径是 RoomButtons/…，
+## 而右栏的输入框是 HostRow/RoomName，两者靠前缀能分开。
+func _prefix(path: String) -> String:
+	if path.begins_with("Room"):
+		return "Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox/"
+	return "Root/Layout/Body/HostPanel/HostMargin/HostBox/"
 
 
 func _list() -> ItemList:
-	return _menu.get_node("Center/Panel/Margin/Box/Rooms")
+	return _menu.get_node("Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox/Rooms")
 
 
 func _status() -> Label:
-	return _menu.get_node("Center/Panel/Margin/Box/Status")
+	return _menu.get_node("Root/Layout/Footer/Status")
 
 
 func _next_stage(stage: int) -> void:

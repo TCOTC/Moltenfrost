@@ -1,0 +1,20 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/ice_block.gd" id="1_ice"]
+
+[sub_resource type="SceneReplicationConfig" id="SceneReplicationConfig_ice"]
+properties/0/path = NodePath(".:position")
+properties/0/spawn = true
+properties/0/replication_mode = 1
+properties/1/path = NodePath(".:sync_time")
+properties/1/spawn = false
+properties/1/replication_mode = 1
+
+[node name="IceBlock" type="CharacterBody2D"]
+collision_layer = 1
+collision_mask = 1
+motion_mode = 1
+script = ExtResource("1_ice")
+
+[node name="Sync" type="MultiplayerSynchronizer" parent="."]
+replication_config = SubResource("SceneReplicationConfig_ice")

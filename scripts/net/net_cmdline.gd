@@ -89,6 +89,15 @@ static func parse(args: PackedStringArray) -> Dictionary:
 				if gravity_raw > 0.0:
 					opts["gravity"] = gravity_raw
 					i += 1
+			"--element":
+				# 单机试关时指定第一个槽位用什么元素。取值由 Element.parse 解释，
+				# 因此这里只做"有没有取值"的判断，不重复一份元素名表。
+				var element_raw := _value_at(args, i + 1)
+				if element_raw.is_empty():
+					push_error("--element 后面需要接 molten 或 frost（也接受 熔 / 霜），例如 --element frost")
+				else:
+					opts["element"] = element_raw
+					i += 1
 		i += 1
 	return opts
 
