@@ -51,7 +51,13 @@ var level: Level = null
 
 ## 每个 peer 到达过的最新检查点序号。只在服务端维护。
 var _checkpoint: Dictionary = {}
-## 每个 peer 的死亡时刻与致命介质。只在服务端维护。
+## 当前处于死亡状态的 peer：peer → {"at": 死时的 _elapsed, "medium": 致命介质}。
+##
+## **两端都维护**，这与 _checkpoint（只在服务端）不同。两个原因：
+##   服务端拿它算复活时刻（at 那一项）；
+##   客户端拿它记住"哪些人现在应当是死的"——快照里的死亡名单可能比角色节点先到
+##   （生成包与 RPC 走不同通道，顺序不保证），那一刻查不到节点，于是要把名单留住、
+##   等角色出现再补上（见 _apply_pending_deaths）。只留一小会儿，因为复活只要 0.9 秒。
 var _dead: Dictionary = {}
 ## 已拾取的积分点下标。**两端都维护**，因为要各自把自己那份画面里的点收掉。
 var _collected: Array[int] = []
@@ -80,7 +86,19 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	_apply_pending_deaths()
 	_push_hud()
+
+
+## 把"已经记下但还没落到节点上"的死亡补记上去。见 _dead 的说明。
+## 只在客户端跑：服务端那侧的角色是它自己在管，不存在"节点还没到"这件事。
+func _apply_pending_deaths() -> void:
+	if _is_server() or _dead.is_empty():
+		return
+	for peer in _dead.keys():
+		var player := _player(int(peer))
+		if player != null and not player.is_dead():
+			player.kill()
 
 
 func _physics_process(delta: float) -> void:
@@ -148,13 +166,82 @@ func score() -> int:
 	return _score
 
 
-## 服务端为新连上的 peer 补齐状态：它可能是中途进来的（虽然当前没有中途加入的入口，
+## 服务端为新连上的 peer 补齐状态。它可能是中途进来的（虽然当前没有中途加入的入口，
 ## 但重开一局时两边都会重新走一次生成，因此这一步是必需的）。
 func on_peer_joined(peer_id: int) -> void:
 	if not _is_server():
 		return
 	_checkpoint[peer_id] = 0
 	_dead.erase(peer_id)
+	catch_up(peer_id)
+
+
+## 把一个 peer 拉齐到当前的世界状态。由入口脚本在 peer 连上时于服务端一侧调用。
+##
+## **为什么必须有这一步**：打掉冰墙、拾取积分、通关这三件事都是**一次性广播**，
+## 只通知当时在场的 peer。晚加入的人从未收到过，于是他会拿着一份与房主不一致的世界——
+## 具体症状就是"客户端那边还立着一面服务端已经不认的冰墙，而主机那边的人径直走了过去"。
+## 这类"状态在生命周期转场处丢失"的问题不会报任何错，也不会在单进程测试里出现，
+## 只能靠这里补一次快照。
+##
+## 冰块不在这里补：它们是由 MultiplayerSpawner 生成的，引擎会给新连上的 peer
+## 重发一遍生成包。手写一遍反而会有两套来源。
+func catch_up(peer_id: int) -> void:
+	if not _is_server():
+		return
+	_rpc_catch_up.rpc_id(peer_id, _world_snapshot())
+
+
+## 当前世界的可同步状态。只包含那些"改过之后就不再变回"的东西——
+## 位置、速度、元素这类持续变化的状态各自有同步器在管，不该混进来。
+func _world_snapshot() -> Dictionary:
+	var broken: Array[int] = []
+	for i in level.solids.size():
+		var solid := level.solid_at_index(i)
+		if solid != null and solid.is_broken():
+			broken.append(i)
+	var dead_peers: Array[int] = []
+	var dead_media: Array[int] = []
+	for peer in _dead.keys():
+		dead_peers.append(int(peer))
+		dead_media.append(int(_dead[peer].get("medium", Element.Medium.LAVA)))
+	return {
+		"broken": broken,
+		"taken": _collected.duplicate(),
+		"score": _score,
+		"completed": _completed,
+		"dead": dead_peers,
+		"dead_medium": dead_media,
+	}
+
+
+## 收到快照：把本机那一份世界改成服务端的样子。
+## 每一项都写成幂等的（已经打掉的墙再打一次、已经拿到的分再记一次都不出错），
+## 因为快照可能与正在流动的广播重叠。
+func _apply_snapshot(snapshot: Dictionary) -> void:
+	for raw in snapshot.get("broken", []):
+		var solid := level.solid_at_index(int(raw))
+		if solid != null:
+			solid.set_broken(true)
+	for raw in snapshot.get("taken", []):
+		var index := int(raw)
+		if _collected.has(index):
+			continue
+		_collected.append(index)
+		var pickup := level.pickup_at_index(index)
+		if pickup != null:
+			pickup.set_taken(true)
+	# 分数直接采用快照的值，而不是把每个积分点再累加一遍——
+	# 那样会让"服务端已经算过、客户端又算一遍"变成两倍。顺序也因此要紧：先落状态，后写分数。
+	_score = int(snapshot.get("score", 0))
+	_completed = bool(snapshot.get("completed", false))
+	if _completed:
+		_hud.show_overlay("关卡完成", "本关剩余积分已结算 · 按 Enter 从头再来一局")
+	var dead_peers: Array = snapshot.get("dead", [])
+	var dead_media: Array = snapshot.get("dead_medium", [])
+	for i in dead_peers.size():
+		var medium := int(dead_media[i]) if i < dead_media.size() else Element.Medium.LAVA
+		_mark_dead(int(dead_peers[i]), medium)
 
 
 func on_peer_left(peer_id: int) -> void:
@@ -291,7 +378,6 @@ func _tick_goal() -> void:
 		if level.goal.contains_point(player.center()):
 			inside += 1
 	if total > 0 and inside == total:
-		_completed = true
 		_apply_completed(COMPLETE_BONUS)
 		_broadcast(&"_rpc_completed", [COMPLETE_BONUS])
 
@@ -435,16 +521,22 @@ func _ice_blocks() -> Array[IceBlock]:
 func _declare_dead(peer_id: int, medium: int) -> void:
 	if _dead.has(peer_id):
 		return
-	_dead[peer_id] = {"at": _elapsed, "medium": medium}
 	_mark_dead(peer_id, medium)
 	_broadcast(&"_rpc_mark_dead", [peer_id, medium])
 
 
-## 把角色置为死亡。各端各自执行，因此必须**幂等**：本机自己那条路径已经先执行过一次，
-## 服务端的广播随后还会到，重复执行不能有效果（否则会出现两条波纹、两次提示）。
+## 把角色置为死亡，并把这件事记进 _dead。各端各自执行，因此必须**幂等**：
+## 本机自己那条路径已经先执行过一次，服务端的广播随后还会到，重复执行不能有效果
+## （否则会出现两条波纹、两次提示）。
 func _mark_dead(peer_id: int, medium: int) -> void:
+	if _dead.has(peer_id):
+		return
+	_dead[peer_id] = {"at": _elapsed, "medium": medium}
 	var player := _player(peer_id)
-	if player == null or player.is_dead():
+	if player == null:
+		# 节点还没到（晚加入时快照先到），由 _apply_pending_deaths 补上。
+		return
+	if player.is_dead():
 		return
 	player.kill()
 	Fx.ripple(_world, player.center(), Element.medium_color(medium), 84.0)
@@ -457,10 +549,17 @@ func _mark_dead(peer_id: int, medium: int) -> void:
 func _broadcast_respawn(peer_id: int) -> void:
 	var index := int(_checkpoint.get(peer_id, 0))
 	var at := level.checkpoint_respawn(index)
+	_apply_respawn(peer_id, at)
+	_broadcast(&"_rpc_respawn", [peer_id, at])
+
+
+## 复活。两端都会走这里，因此死亡名单也在这里清掉——
+## 漏了它，客户端的补记循环会每帧把刚复活的人又按死一次。
+func _apply_respawn(peer_id: int, at: Vector2) -> void:
+	_dead.erase(peer_id)
 	var player := _player(peer_id)
 	if player != null:
 		player.revive(at)
-	_broadcast(&"_rpc_respawn", [peer_id, at])
 
 
 # ---------------------------------------------------------------- 交换角色
@@ -494,7 +593,13 @@ func _broadcast_pickup(index: int, value: int) -> void:
 	_broadcast(&"_rpc_pickup", [index, value])
 
 
+## 通关结算。**标志的置位放在这里而不是调用方**：两处调用点（服务端判定与 RPC）
+## 原本各写一次 `_completed = true`，一旦有第三个调用点忘了写，就会出现
+## "分数加了、通关状态没加"这种一半的状态——而晚加入的快照正好是照 `_completed` 取的。
 func _apply_completed(bonus: int) -> void:
+	if _completed:
+		return
+	_completed = true
 	_score += bonus
 	_hud.show_overlay("关卡完成", "本关剩余积分已结算 · 按 Enter 从头再来一局")
 	_hud.toast("两人都到达了出口，关卡完成", 2.5)
@@ -537,6 +642,7 @@ func _restart() -> void:
 
 func _apply_restart(positions: Dictionary) -> void:
 	_completed = false
+	_dead.clear()
 	_hud.hide_overlay()
 	for i in level.solids.size():
 		var solid := level.solid_at_index(i)
@@ -590,15 +696,18 @@ func _rpc_request_restart() -> void:
 
 
 @rpc("authority", "call_remote", "reliable")
+func _rpc_catch_up(snapshot: Dictionary) -> void:
+	_apply_snapshot(snapshot)
+
+
+@rpc("authority", "call_remote", "reliable")
 func _rpc_mark_dead(peer_id: int, medium: int) -> void:
 	_mark_dead(peer_id, medium)
 
 
 @rpc("authority", "call_remote", "reliable")
 func _rpc_respawn(peer_id: int, at: Vector2) -> void:
-	var player := _player(peer_id)
-	if player != null:
-		player.revive(at)
+	_apply_respawn(peer_id, at)
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -630,9 +739,6 @@ func _rpc_pickup(index: int, value: int) -> void:
 
 @rpc("authority", "call_remote", "reliable")
 func _rpc_completed(bonus: int) -> void:
-	if _completed:
-		return
-	_completed = true
 	_apply_completed(bonus)
 
 

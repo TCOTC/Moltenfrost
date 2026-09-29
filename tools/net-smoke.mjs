@@ -193,7 +193,7 @@ function waitFor(state, needle, timeoutMs) {
 }
 
 function stop(state) {
-  if (state.exited) return;
+  if (state === null || state === undefined || state.exited) return;
   // 要结束整棵进程树：Windows 上的 *_console.exe 只是个包装程序，
   // 它会以子进程方式启动真正的引擎二进制。只结束包装进程会留下实例占着端口，
   // 下次运行就会以"端口被占用"的形式失败。
@@ -337,6 +337,50 @@ async function main() {
     stop(orphan);
   }
   assertions.push("连接尚未建立时不刷 RPC 错误");
+
+  // 晚加入：主机在没人旁观时打掉冰墙、拿掉一个积分点、通关，然后客户端才连上来。
+  // 这三件事都只通过一次性 RPC 通知当时在场的 peer，因此晚加入的人必须靠一份状态快照补上
+  //（Game.catch_up）。漏了它不会报任何错，症状只是"客户端立着一面服务端不认的墙，
+  // 而主机那边的人径直走了过去"——只有两进程一起跑才看得见。
+  //
+  // **必须等主机改完世界再启动客户端**，否则客户端会收到那次广播、这个测试就白跑了。
+  // **两个进程都必须是后台进程**，不能用 spawnSync 跑客户端：
+  // spawnSync 会把 Node 的事件循环卡住，这段时间没人读主机的 stdout，
+  // 主机的管道写满之后就在 print 上阻塞，表现为"客户端连上了、主机却没了心跳"。
+  // 实测踩过一次，症状与真 bug 一模一样。
+  const latePort = opts.port + 3;
+  const lateScene = "res://tests/late_join_test.tscn";
+  const lateBase = ["--headless", "--path", PROJECT_DIR, lateScene, "--"];
+  const lateHost = launch(
+    godot,
+    [...lateBase, "--phase", "host", "--port", "0", "--target-port", String(latePort)],
+    "晚加入测试主机",
+    opts,
+  );
+  let lateClient = null;
+  try {
+    await waitFor(lateHost, "[late] 主机已在无人旁观时改掉世界", timeoutMs);
+    lateClient = launch(
+      godot,
+      [...lateBase, "--phase", "join", "--port", "0", "--target-port", String(latePort)],
+      "晚加入测试客户端",
+      opts,
+    );
+    try {
+      const m = await waitForMatch(lateClient, /晚加入状态补齐测试通过（(\d+) 项断言）/, timeoutMs);
+      assertions.push(`晚加入的 peer 能补齐世界状态（${Number(m[1])} 项断言）`);
+    } catch (e) {
+      // 这一项要两个进程配合，只看到一侧的输出时分不清是"快照没发"还是"主机根本没在跑"，
+      // 因此失败时把两边的日志都带出来。
+      throw new Error(
+        `${e.message}\n--- 客户端（末 20 行）---\n${tail(lateClient.text, 20)}` +
+        `\n--- 主机（末 20 行）---\n${tail(lateHost.text, 20)}`,
+      );
+    }
+  } finally {
+    stop(lateClient);
+    stop(lateHost);
+  }
 
   // 对局事件的送达。Game 的广播绕开了 Node.rpc()（逐 peer 调 rpc_id），
   // 那条路不通时症状是"对端什么都看不到"且**不报任何错**——本地单机测试与

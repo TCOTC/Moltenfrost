@@ -331,6 +331,8 @@ func _on_peer_connected(id: int) -> void:
 	# 只有服务端负责生成角色，其余 peer 等生成包到达即可。
 	if Net.is_server():
 		_spawn_player(id)
+		# 排在这一句之后：先把人放到场上，再把他没见过的那部分世界（打掉的墙、
+		# 已经拿掉的积分……）补给他。见 Game.catch_up 的说明。
 		_game.on_peer_joined(id)
 	_refresh_status()
 
