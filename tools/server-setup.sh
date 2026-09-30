@@ -405,25 +405,23 @@ fi
 # 服务器验收 6 项失败，人手动试玩时则表现为"改了但没生效"。
 # **因此这一段必须无条件执行。**
 #
-# 只在服务已经在跑时重启；没跑就不自作主张启动（部署与启动是两件事）。
-# 目录模式下要重启的是**目录 + 房间池**：那个 27015 上的单房间服务已经不是玩家的
-# 入口了（见上面的切换说明）。房间进程是池的子进程，重启池就等于把它们全部换掉
-#（池停时会逐间请它们自己退出，见 KillMode=control-group 的说明）。
-restart_list=()
-if [[ "$DIRECTORY" == "1" ]]; then
-  restart_list+=("${SERVICE_NAME}-directory")
-  restart_list+=("${SERVICE_NAME}-pool")
+# 重启谁**也不看 --directory**，只看"实际上在跑什么"。理由同样是那次教训：
+# 文档里给的日常更新命令（10.4 那条）不带 --directory，而旧写法按 --directory 拼
+# 重启列表 —— 于是它去重启一个早就不存在了的单房间单元，而真正在跑的目录与池
+# 一个都没动，且输出里只有一句"is not running"，看起来完全正常。
+# 目录 + 池 + 可能残留的房间实例都属于 ${SERVICE_NAME}*.service，因此按名字发现即可。
+mapfile -t running_units < <(
+  systemctl list-units --type=service --state=active --no-legend "${SERVICE_NAME}*.service" 2>/dev/null |
+    awk '{print $1}' || true
+)
+if [[ ${#running_units[@]} -eq 0 ]]; then
+  echo "no running ${SERVICE_NAME}* units (nothing to restart; deploy does not start services)"
 else
-  restart_list+=("${SERVICE_NAME}@${PORT}")
-fi
-for unit in "${restart_list[@]}"; do
-  if systemctl is-active --quiet "$unit"; then
+  for unit in "${running_units[@]}"; do
     echo "restarting $unit to pick up the new code"
     sudo systemctl restart "$unit"
-  else
-    echo "$unit is not running (nothing to restart)"
-  fi
-done
+  done
+fi
 
 say "done"
 echo "repo:   $REPO_DIR"
