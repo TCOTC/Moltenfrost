@@ -784,6 +784,10 @@ func _reset_to_lobby() -> void:
 	# 加入顺序必须清掉：房主是"第一个进来的人"，而上一局的顺序留着的话，
 	# 下一批人里会有一个早就不在房间里的 peer 被认成房主 —— 于是谁也点不了开始。
 	_join_order.clear()
+	# 房间名也要回到默认值。理由是"房间名由房主配置"这条规则的直接推论：
+	# 人走光了就没有房主了，而留下来的是一个**上一批人的名字**（下一批人进来会看到
+	# 一间空房叫"小明和他的朋友"）。用 Net.port 而不是 _port：后者在 `--port 0` 时是 0。
+	_room_name = _default_room_name(Net.port)
 	_clear_players()
 	print("[lobby] 房间已回到空闲状态，等下一批玩家")
 	_show_lobby()
