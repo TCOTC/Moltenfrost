@@ -458,6 +458,17 @@ func _start_game() -> void:
 	_refresh_registration()
 
 
+## 没有给房间名时的兜底。**公网房间的兜底带上端口**，因为这个默认值会被展示出去：
+## 官方那边同时开着好几间房，它们在同一个域名上、只有端口不同（见 docs/公网房间方案.md 的
+## 路线 A）。若都用同一个中性名字，列表里就是几条一字不差的行，看着像列表重复了同一个
+## 条目——真机上被问到过。房主在大厅里改过名字之后这个值就被覆盖，因此它只在
+## "还没人来过"时可见。局域网那一档不必区分（同一个网段里通常只有一间），保持中性名字。
+func _default_room_name(port: int) -> String:
+	if not _directory.is_empty():
+		return "房间 %d" % port
+	return LanDiscovery.default_room_name()
+
+
 ## 创建房间：本机开始监听，并且（非专用服务端时）本机也是一个玩家。
 ## 界面上的"创建房间"、命令行的 `--host` 与无头启动都汇聚到这里，三条路径的行为不会有差别。
 ##
@@ -466,7 +477,7 @@ func _start_game() -> void:
 ##   命令行/无头（false）—— 连上即开局。专用服务端与 tools/net-smoke.mjs 都依赖它，
 ##                          没人能点界面的场合下大厅没有意义（见 docs/公网房间方案.md 的 Q7）。
 func _host_game(room_name: String, port: int, dedicated: bool, via_lobby: bool = false) -> void:
-	_room_name = room_name if not room_name.is_empty() else LanDiscovery.default_room_name()
+	_room_name = room_name if not room_name.is_empty() else _default_room_name(port)
 	_port = port
 	# 这两个标记必须成对设置。少设 `_via_lobby` 的后果不是界面难看，而是**名单根本不下发**——
 	# `_broadcast_lobby()` 与 `in_lobby()` 都看它，于是客户端等在大厅里什么也收不到，

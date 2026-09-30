@@ -169,7 +169,11 @@ class Directory:
         players = clamp_int(body.get("players"), 0, 4096, 1)
         max_players = clamp_int(body.get("max"), 1, 4096, 2)
         state = "playing" if body.get("state") == "playing" else "waiting"
-        room = Room(name or "未命名房间", host, port, players, max_players, state)
+        # 名字为空时的兜底。**带上端口**：同一台主机上可能同时开着好几间房（见
+        # docs/公网房间方案.md 的路线 A），而它们的地址是同一个域名，若都叫同一个
+        # 名字，列表里就是几条一字不差的行，看着像列表重复了同一个条目。
+        # 正常部署下房间总会报一个名字，走到这里说明登记方有问题，所以它只是兜底。
+        room = Room(name or "房间 %d" % port, host, port, players, max_players, state)
         with self.lock:
             key = room.key()
             if key not in self.rooms and len(self.rooms) >= self.max_rooms:
@@ -317,6 +321,16 @@ def run_selftest() -> int:
     ok(small.register({"port": 1}, "127.0.0.1").get("ok"), "第一间应当登记成功")
     ok(not small.register({"port": 2}, "127.0.0.1").get("ok"), "超过上限应当被拒")
     ok(small.register({"port": 1}, "127.0.0.1").get("ok"), "已存在的房间刷新不应被上限拦住")
+
+    # --- 没有名字的房间要能被区分开 ---
+    # 同一台主机上的几间空房只差端口，名字若一样，列表里就是两条一模一样的行。
+    nameless = Directory(ttl=6.0, max_rooms=8, verbose=False)
+    for bare_port in (40001, 40002):
+        nameless.register({"port": bare_port, "host": "mf.example.com"}, "127.0.0.1")
+    blank = {r["port"]: r["name"] for r in nameless.listing()["rooms"]}
+    ok(blank[40001] != blank[40002],
+       "同一主机上的无名字房间不应当重名，得到 %r / %r" % (blank[40001], blank[40002]))
+    ok("40001" in blank[40001], "兜底名字应当带上端口，得到 %r" % blank[40001])
 
     # --- 注销与可进性 ---
     ok(directory.unregister(40005).get("ok"), "注销应当成功")

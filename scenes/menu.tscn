@@ -115,7 +115,7 @@ text = "加入一局"
 [node name="RoomsHint" type="Label" parent="Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox"]
 theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
 theme_override_font_sizes/font_size = 15
-text = "局域网里的房间会自动出现在下面；官方房间一直在列表最上面。"
+text = "局域网里的房间会自动出现在下面；官方服务器上的房间由目录每几秒刷新一次。选中一间再点下面的按钮。"
 autowrap_mode = 3
 
 [node name="Rooms" type="ItemList" parent="Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox"]

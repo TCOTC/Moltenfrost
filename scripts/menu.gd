@@ -401,9 +401,12 @@ func _room_label(room: Dictionary) -> String:
 		var max_players := int(room.get("max", 2))
 		var state := "进行中" if String(room.get("state", "waiting")) == "playing" else "等待中"
 		# 人数与状态都对玩家有用：“2/2 等待中”与“1/2 等待中”是不同的选择。
-		return "%s    %d/%d 人    %s    %s" % [
+		# **端口必须带上**：官方那几间房在同一个域名上，只有端口不同，只写地址会让
+		# 若干行一字不差（真机上被当成“列表重复了一个条目”的 bug）。形式与局域网那一行
+		# 统一，因为它就是玩家要填进「手动连接」的那个地址。
+		return "%s    %d/%d 人    %s    %s:%d" % [
 			String(room.get("name", "房间")), int(room.get("players", 0)), max_players,
-			state, String(room.get("address", "?")),
+			state, String(room.get("address", "?")), int(room.get("port", 0)),
 		]
 	return "%s    %s:%d    %d 人    局域网" % [
 		String(room.get("name", "房间")),

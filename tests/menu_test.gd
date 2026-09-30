@@ -181,6 +181,22 @@ func _case_room_listed() -> bool:
 		_ok(not address.is_empty() and address != "0.0.0.0", "加入的地址应当是收到广播的那个地址，实际「%s」" % address)
 		_ok(int(_join_calls[1][1]) == ROOM_PORT, "加入的端口应当取自房间而不是界面上的默认值，实际 %d" % int(_join_calls[1][1]))
 		_ok(int(_join_calls[1][2]) == Lobby.Kind.LAN, "局域网房应当带 LAN 类型，实际 %d" % int(_join_calls[1][2]))
+
+	# **同一地址、同一名字的两间房也必须能分辨。** 这是真机上被问到的那一种：
+	# 官方那边几间房共用一个域名，而一开始的行里只写了地址、没写端口，
+	# 于是列表里出现两条一字不差的行，看起来像列表重复了同一个条目。
+	# 这里刻意把名字也取成一样的，把"能不能分辨"逼到只剩端口这一个变量——
+	# 上面那几条用的是三个不同的名字，恰好绕开了这个坑。
+	_menu.call("_on_directory_rooms", [
+		{"name": "未命名房间", "host": OFFICIAL_HOST, "port": OFFICIAL_ROOM_PORT,
+		 "players": 0, "max": 2, "state": "waiting", "joinable": true},
+		{"name": "未命名房间", "host": OFFICIAL_HOST, "port": OFFICIAL_FULL_PORT,
+		 "players": 0, "max": 2, "state": "waiting", "joinable": true},
+	])
+	var twins := [_list().get_item_text(0), _list().get_item_text(1)]
+	_ok(twins[0] != twins[1], "同地址同名的两间房不应当显示成一模一样，都是「%s」" % twins[0])
+	_ok(twins[0].contains(str(OFFICIAL_ROOM_PORT)) and twins[1].contains(str(OFFICIAL_FULL_PORT)),
+		"公网房间的行里应当带各自的端口，实际「%s」/「%s」" % twins)
 	return true
 
 
