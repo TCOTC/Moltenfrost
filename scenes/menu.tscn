@@ -199,7 +199,7 @@ autowrap_mode = 3
 [node name="PortTitle" type="Label" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
 theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
 theme_override_font_sizes/font_size = 15
-text = "游戏端口（创建与手动加入共用）"
+text = "游戏端口（本机开房用）"
 
 [node name="PortRow" type="HBoxContainer" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
 theme_override_constants/separation = 10
@@ -217,7 +217,7 @@ text = "直接填地址加入"
 [node name="DirectHint" type="Label" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
 theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
 theme_override_font_sizes/font_size = 15
-text = "跨网时局域网探测收不到对方，把主机给出的「地址:端口」填在这里（端口用上面那一格）。"
+text = "跨网时局域网探测收不到对方：把主机给出的「地址:端口」整串填在这里（也可以只填地址，端口取上面那一格）。"
 autowrap_mode = 3
 
 [node name="DirectRow" type="HBoxContainer" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox"]
@@ -226,7 +226,7 @@ theme_override_constants/separation = 10
 [node name="Address" type="LineEdit" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow"]
 custom_minimum_size = Vector2(0, 46)
 size_flags_horizontal = 3
-placeholder_text = "主机地址，例如 192.168.5.210"
+placeholder_text = "地址:端口，例如 192.168.5.210:27015"
 
 [node name="Direct" type="Button" parent="Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow"]
 custom_minimum_size = Vector2(120, 46)

@@ -300,6 +300,12 @@ func _case_actions() -> void:
 	# 目录回了地址之后才发 join_requested。
 	_button("KindRow/Public").button_pressed = true
 	_ok(not _line("HostRow/RoomName").editable, "选公网后房间名那一格应当锁上（名字由房主在大厅里改）")
+	# 端口那一整段在公网下整段消失。理由是同一类：公网房间的端口由官方那边的池分配，
+	# 本机这个值一点也不参与；留着它可见但被忽略，玩家会以为端口是他定的。
+	_ok(not _label("PortTitle").visible, "选公网后「游戏端口」的小标题应当隐藏")
+	_ok(not _line("PortRow/Port").is_visible_in_tree(), "选公网后端口输入框应当隐藏")
+	_ok(not _label("HostHint").text.contains("在本机开一个服务端"),
+		"公网的说明不应说“在本机开服务端”，实际「%s」" % _label("HostHint").text)
 	# 端口框里放一个非法值：公网创建不看它（房间在服务器上），所以也不该被它拦住。
 	_line("PortRow/Port").text = NOT_A_PORT
 	var before_public := _join_calls.size()
@@ -343,6 +349,9 @@ func _case_actions() -> void:
 	_menu.set_message("自检：解除忙碌")
 	_button("KindRow/Lan").button_pressed = true
 	_ok(_line("HostRow/RoomName").editable, "切回局域网后房间名那一格应当恢复可编辑")
+	_ok(_line("PortRow/Port").is_visible_in_tree(), "切回局域网后端口输入框应当重新出现")
+	_ok(_label("HostHint").text.contains("在本机开一个服务端"),
+		"局域网的说明应当说清它是在本机开服务端，实际「%s」" % _label("HostHint").text)
 	_line("PortRow/Port").text = str(MENU_PORT)
 	_button("HostRow/Host").pressed.emit()
 	_ok(_host_calls.size() == 2, "切回局域网后应当能再次创建房间，实际共 %d 次" % _host_calls.size())
@@ -362,6 +371,20 @@ func _case_actions() -> void:
 		var call: Array = _join_calls[before]
 		_ok(String(call[0]) == "127.0.0.1", "手动加入的地址应当取自输入框，实际「%s」" % call[0])
 		_ok(int(call[1]) == MENU_PORT, "手动加入的端口应当取自输入框，实际 %d" % int(call[1]))
+
+	# 整串「地址:端口」。主机 HUD 上显示的就是这个格式，玩家会整串拄过来，
+	# 因此它必须能直接用，而且**以那一串为准**——端口框里这时是个不同的值。
+	var before_pair := _join_calls.size()
+	_line("DirectRow/Address").text = "127.0.0.1:%d" % ROOM_PORT
+	_line("PortRow/Port").text = str(MENU_PORT)
+	_button("DirectRow/Direct").pressed.emit()
+	_ok(_join_calls.size() == before_pair + 1,
+		"填「地址:端口」后点加入应当发一次 join_requested，实际增了 %d 次" % (_join_calls.size() - before_pair))
+	if _join_calls.size() == before_pair + 1:
+		var pair: Array = _join_calls[before_pair]
+		_ok(String(pair[0]) == "127.0.0.1", "地址里带的端口应当被切掉，实际「%s」" % pair[0])
+		_ok(int(pair[1]) == ROOM_PORT,
+			"端口应当取自地址里的那一串而不是端口框（框里是 %d），实际 %d" % [MENU_PORT, int(pair[1])])
 
 	_ok(_menu.visible, "close() 之前界面应当是可见的（上面那些按钮才点得动）")
 

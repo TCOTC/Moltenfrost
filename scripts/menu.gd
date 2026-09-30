@@ -61,7 +61,19 @@ var _room_kind: int = Lobby.Kind.LAN
 @onready var _lan_kind: Button = $Root/Layout/Body/HostPanel/HostMargin/HostBox/KindRow/Lan
 @onready var _pub_kind: Button = $Root/Layout/Body/HostPanel/HostMargin/HostBox/KindRow/Public
 @onready var _kind_hint: Label = $Root/Layout/Body/HostPanel/HostMargin/HostBox/KindHint
+## 「开一局」下面那行说明。它的内容随类型变：局域网真的是在本机开一个服务端，
+## 而公网只是去官方服务器上领一间房、**本机不开任何东西**（见 _refresh_kind_hint）。
+@onready var _host_hint: Label = $Root/Layout/Body/HostPanel/HostMargin/HostBox/HostHint
+## 「游戏端口」那一整段（小标题 + 输入框）。**公网模式下整段隐藏**：
+## 公网房间跑在官方服务器上、端口由房间池分配，本机这个值一点也不参与。
+## 原来它可见但被忽略，而那是最差的一种：填了一个不生效的值，
+## 又没有任何反馈说明它不生效（账号名那一格在公网下锁上，是同一个道理）。
+@onready var _port_title: Label = $Root/Layout/Body/HostPanel/HostMargin/HostBox/PortTitle
+@onready var _port_row: Control = $Root/Layout/Body/HostPanel/HostMargin/HostBox/PortRow
 @onready var _address: LineEdit = $Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow/Address
+## 「直接填地址加入」那行说明。它也要随类型变：局域网的写法可以回落到上面那一格端口，
+## 而公网模式下那一格是**隐藏**的，再说“端口取上面那一格”就是指向一个不存在的东西。
+@onready var _direct_hint: Label = $Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectHint
 ## 端口只有这一格，创建房间与手动填地址加入共用。
 ## 拆成两格反而更难用：填了一个以为两个都改了，是这类界面最常见的报错来源。
 @onready var _port: LineEdit = $Root/Layout/Body/HostPanel/HostMargin/HostBox/PortRow/Port
@@ -367,16 +379,36 @@ func _joinable(room: Dictionary) -> bool:
 
 
 func _on_direct_pressed() -> void:
-	var address := _address.text.strip_edges()
-	if address.is_empty():
-		_set_status("请填写主机的地址，例如 192.168.5.210。")
+	var target := _parse_target()
+	if String(target.get("host", "")).is_empty():
+		_set_status("请填写主机的地址，例如 192.168.5.210:27015。")
 		return
-	var port := _parse_port()
+	var port := int(target.get("port", 0))
 	if port <= 0:
-		return
+		# 地址里没带端口（或者写了个不合法的）：回落到上面那一格。
+		port = _parse_port()
+		if port <= 0:
+			return
 	# 手填地址的一律按局域网算：那条路径上的超时就是地址/防火墙问题，
 	# 按公网提示会把玩家引到"房间都满了"上去。
-	_begin_join(address, port, Lobby.Kind.LAN)
+	_begin_join(String(target["host"]), port, Lobby.Kind.LAN)
+
+
+## 把「地址」或「地址:端口」拆成两半。端口那一半缺失或不是合法端口时只回地址，
+## 由调用方回落到端口框（公共默认值），而不在这里报错：
+## 那一格既可以只写地址（同一局域网里探不到对方时最常用），也可以整串拄
+## 主机 HUD 上显示的 `地址:端口`——两种写法都收下比强行规定一种更少出错。
+##
+## 只按**最后一个**冒号切。IPv6 不支持（探测与地址提示都是 IPv4，见 _lan_addresses），
+## 所以不必处理"冒号属于地址本身"那种情形。
+func _parse_target() -> Dictionary:
+	var trimmed := _address.text.strip_edges()
+	var cut := trimmed.rfind(":")
+	if cut > 0:
+		var tail := trimmed.substr(cut + 1)
+		if tail.is_valid_int() and int(tail) >= MIN_PORT and int(tail) <= MAX_PORT:
+			return {"host": trimmed.substr(0, cut), "port": int(tail)}
+	return {"host": trimmed, "port": 0}
 
 
 ## 切换公开类型。只改状态与那行说明，不发信号——发信号是点「创建房间」时的事。
@@ -388,6 +420,10 @@ func _set_room_kind(kind: int) -> void:
 	# `not _busy` 那一半是必要的：创建进行中时所有输入都被锁着，
 	# 而这里若只按类型判断，会把那一格在这一刻意外解锁。
 	_room_name.editable = kind != Lobby.Kind.PUBLIC and not _busy
+	# 端口那一整段同理：公网房间的端口由官方那边的池分配。
+	var local_port_in_use := kind != Lobby.Kind.PUBLIC
+	_port_title.visible = local_port_in_use
+	_port_row.visible = local_port_in_use
 	_refresh_kind_hint()
 
 
@@ -398,8 +434,12 @@ func _set_room_kind(kind: int) -> void:
 func _refresh_kind_hint() -> void:
 	if _room_kind == Lobby.Kind.PUBLIC:
 		_kind_hint.text = "公网 · 房间开在官方服务器上，跨网也能加入。点创建会领一间空房并由你当房主，进去之后可以改房间名；别人也能在左侧列表里看到它并加入。"
+		_host_hint.text = "创建会去官方服务器上领一间空房、由你当房主：本机不开服务端，也不需要填端口。"
+		_direct_hint.text = "把房间地址整串填在这里（公网房间的地址都是「地址:端口」）。"
 	else:
 		_kind_hint.text = "局域网 · 房间开在本机，同一局域网里的人在左侧列表里就能看到它。"
+		_host_hint.text = "创建房间就是在本机开一个服务端。建好之后先停在等待房间，人齐了再开始。"
+		_direct_hint.text = "跨网时局域网探测收不到对方：把主机给出的「地址:端口」整串填在这里（也可以只填地址，端口取上面那一格）。"
 
 
 func _begin_join(address: String, port: int, kind: int) -> void:
