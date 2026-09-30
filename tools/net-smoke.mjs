@@ -212,6 +212,21 @@ function tail(text, lines = 30) {
   return text.split(/\r?\n/).slice(-lines).join("\n");
 }
 
+// 失败时只看末尾若干行会漏掉最该看的那一条：驱动器把「哪一条断言不成立」打在
+// **比末尾更靠上**的位置（它后面还会打印别的），于是关键行恰好被截掉。
+// 实测因此多跑了三轮（日志里只有「有断言不成立」，看不到是哪一条）。
+// 所以除了末尾若干行，再把所有断言/错误行一并附上——它们才是要读的东西。
+function diag(text, lines = 15) {
+  const all = text.split(/\r?\n/);
+  // 把带标记的行（[drive]/[lobby]/[session]/[player]…）全带上，不只是 [drive]：
+  //   「驱动器读到 0 人」这一个现象，光是 [drive] 那几条看不出是名单没到、
+  //   还是名单到了但是空的 —— 而 [lobby] 那行直接给出答案（"名单：N 人"）。
+  const picked = all.filter((s) => /\[[a-z_]+\]|ERROR|失败|超时/.test(s));
+  const pickedText = picked.join("\n");
+  const tailText = tail(text, lines);
+  return pickedText === tailText ? tailText : `${tailText}\n--- 上面全部带标记的行 ---\n${pickedText}`;
+}
+
 // 纯逻辑检查：按 `--script` 或“以场景为入口”跑一个检查脚本，
 // 从输出里取“通过（N 项断言）”这一行。几个检查共用这段流程。
 // 以场景为入口的那一项要在 `--` 之后传参数，因此这里也支持 userArgs。
@@ -446,9 +461,12 @@ async function main() {
       await waitFor(lobbyServer, "监听 UDP", timeoutMs);
       // 驱动器就是"在无头环境里替真人点那个按钮"。两端跑同一个场景，
       // 各自按自己的角色行事：房主在名单达到 2 人时请求开局，另一端什么都不做。
-      const driverArgs = (label) => [
+      //
+      // `--escape` 再验一段：开局之后房主按 Esc → 两端回等待房间、房主不变、
+      // 而且能再开一局。那一段是"局中 Esc 不该退出房间"这条需求的自动检查。
+      const driverArgs = () => [
         "--headless", "--path", PROJECT_DIR, "res://tests/lobby_start_drive.tscn",
-        "--", "--join", "127.0.0.1", "--port", String(lobbyPort), "--lobby",
+        "--", "--join", "127.0.0.1", "--port", String(lobbyPort), "--lobby", "--escape",
       ];
       const first = launch(godot, driverArgs(), "驱动器 1", opts);
       drivers.push(first);
@@ -473,8 +491,8 @@ async function main() {
       for (const driver of drivers) {
         if (driver.exitCode !== 0) {
           throw new Error(
-            `${driver.label}退出码 ${driver.exitCode}，说明它没走完大厅流程（末 15 行）：\n` +
-            tail(driver.text, 15),
+            `${driver.label}退出码 ${driver.exitCode}，说明它没走完大厅流程：\n` +
+            diag(driver.text),
           );
         }
       }
@@ -495,6 +513,31 @@ async function main() {
       }
       assertions.push("大厅里两人同房、先到的成为房主并请求开局");
       assertions.push("人齐后两端都进关，且各看到 2 个角色");
+
+      // Esc 那一段。**两端都要看到"回到等待房间"**：只查房主那侧只能证明它自己
+      // 切了屏，而"那个通知真的广播到了客户端"才是这条 RPC 的价值。
+      for (const driver of drivers) {
+        if (!/回到等待房间/.test(driver.text)) {
+          throw new Error(
+            `${driver.label}没有回到等待房间：\n${diag(driver.text)}`,
+          );
+        }
+        if (!/OK: 第二局场上也是 2 个角色/.test(driver.text)) {
+          throw new Error(
+            `${driver.label}没走完"回房间 → 再开一局"：\n${diag(driver.text)}`,
+          );
+        }
+      }
+      if (!/OK: 回到房间后名单里还有 2 人/.test(first.text)) {
+        throw new Error(`房主按 Esc 之后名单丢了：\n${diag(first.text)}`);
+      }
+      if (!/OK: 回到房间后房主没变/.test(first.text)) {
+        throw new Error(
+          `回到房间后房主变了（_join_order 被清掉的话 host_id() 会是 0，` +
+          `于是谁也开不了下一局）：\n${diag(first.text)}`,
+        );
+      }
+      assertions.push("局中按 Esc 回到等待房间：两端都在、房主不变、还能再开一局");
     } finally {
       for (const driver of drivers) stop(driver);
       stop(lobbyServer);

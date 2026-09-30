@@ -92,8 +92,16 @@ static func kind_name(kind: int) -> String:
 
 
 ## 打开大厅。名单还没到，因此房主是谁、有几个人都要等 apply() 才知道。
-func open() -> void:
+##
+## `keep_roster` 给「回到等待房间」那条路用：局中按 Esc 回到房间时，房间里的人**一个都没变**
+##（只是这一局不打了），因此那份名单仍然是准的，清掉反而会闪一下「正在等待房间信息…」。
+## 而且那份空白不是只闪一帧：新名单是另一次 RPC 发过来的，客户端要等它到达——
+## 实测自检驱动器就读到了那一帧的「0 人」（它断言的是"回到房间后名单里还有 2 人"）。
+func open(keep_roster := false) -> void:
 	visible = true
+	if keep_roster:
+		_refresh()
+		return
 	_clear_rows()
 	_player_count = 0
 	_is_host = false

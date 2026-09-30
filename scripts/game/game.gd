@@ -273,6 +273,29 @@ func reset_for_new_session() -> void:
 	# 抬头显示的"你/队友"两格不用手动清：角色一没，_push_hud 下一帧就会推成空。
 
 
+## 从对局退回**等待房间**时把这一局收回起始状态。
+##
+## 与 `reset_for_new_session()` 的区别只有一条：**拾取点不恢复**。
+## 那一个用于"离开房间、换一间"（新会话，关卡该是干净的）；这一个用于
+## "同一间房里再开一局"。拾取点若在每次回大厅时复活，就等于给了一个
+## "退出再开局"的刷分按钮——与 `_restart()` 刻意不恢复它是同一个理由（积分属于账号）。
+##
+## 与 `_restart()` 的区别是**不摆人**：回到大厅时场上不该有角色，
+## 下一次开局由入口脚本重新生成，那一步会把大家放回出生点。
+func reset_round_for_lobby() -> void:
+	for block in _ice_blocks():
+		block.queue_free()
+	for i in level.solids.size():
+		var solid := level.solid_at_index(i)
+		if solid != null:
+			solid.set_broken(false)
+	_checkpoint.clear()
+	_dead.clear()
+	_queue.clear()
+	_completed = false
+	_hud.hide_overlay()
+
+
 # ---------------------------------------------------------------- 输入
 
 func _unhandled_input(event: InputEvent) -> void:

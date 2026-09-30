@@ -41,7 +41,7 @@ func _ready() -> void:
 	_overlay.visible = false
 	# 常驻的按键提示。写在这里而不是场景里，是因为它随输入映射变化——
 	# 输入重绑定做完之后这一行必须跟着改，放在一起才不会漏。
-	_hint.text = "A / D 移动   空格 跳跃   E 技能   Q 交换角色   R 本关重来   Esc 返回大厅"
+	_hint.text = "A / D 移动   空格 跳跃   E 技能   Q 交换角色   R 本关重来   Esc 回到等待房间"
 	_level_name.text = ""
 	_score.text = ""
 

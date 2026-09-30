@@ -246,12 +246,14 @@ func _leave_menu_for_game() -> void:
 
 ## 显示等待房间。与菜单一样把镜头交给菜单相机：大厅背后是本关起点那一带的地形，
 ## 半透明底色能透出它来，比一块纯色更像"游戏里的房间"。
-func _show_lobby() -> void:
+##
+## `keep_roster` 只在「回到等待房间」那条路上为真，理由见 Lobby.open 的说明。
+func _show_lobby(keep_roster := false) -> void:
 	_menu.close()
 	_hud.visible = false
 	_menu_camera.enabled = true
 	_menu_camera.make_current()
-	_lobby.open()
+	_lobby.open(keep_roster)
 	_refresh_lobby()
 
 
@@ -456,7 +458,7 @@ func _start_game() -> void:
 		_rpc_game_started.rpc()
 	_hide_lobby()
 	_leave_menu_for_game()
-	_set_notice("对局开始。按 Esc 返回初始界面。")
+	_set_notice("对局开始。按 Esc 回到等待房间。")
 	# 开局要立刻报给目录：它据此把这间房标为不可进（"还在等"是唯一能挡住
 	# 陌生人半路插进来的东西，所以这一格的时效性不能等下一个周期）。
 	_refresh_registration()
@@ -561,10 +563,25 @@ func _return_to_menu(message: String) -> void:
 	_menu.set_message(message)
 
 
-func _clear_players() -> void:
+## 只把角色节点清掉，**不动关卡里的世界状态，也不动槽位**。
+##
+## 与 `_clear_players()` 分开是因为两者对"这一局的世界"要求不同：
+## 离开房间（新会话）要关卡回到干净状态、槽位也重新分配；
+## 而回到等待房间只是在同一间房里重开一局——**槽位留着**，同一个人下一局还是同一个元素
+##（`_allocate_slot` 的注释说过：中途变掉元素看起来像出了 bug）。
+func _despawn_players() -> void:
 	for child in _players.get_children():
 		if child is Player:
+			# **先 remove_child 再 queue_free。** 只 queue_free 的话节点要到本帧末尾才真的
+			# 离开树，而"场上有没有人"这件事在同一帧就可能被读到：回到大厅之后紧接着
+			# 开局时，_spawn_player 会以为那个 peer 的角色还在、于是**跳过生成**——
+			# 那一局就没有角色了。实测踩到（驱动器在同一帧断言"场上没有角色"时读到了 2）。
+			_players.remove_child(child)
 			child.queue_free()
+
+
+func _clear_players() -> void:
+	_despawn_players()
 	_slots.clear()
 	# 这一局造出来的冰、被打掉的冰墙、被拾取的积分点也一起清掉：
 	# 它们是**这一局**的状态，不该跟着人走进下一个房间。
@@ -687,13 +704,67 @@ func _on_menu_join_requested(address: String, port: int, kind: int) -> void:
 	_begin_join(address, port, true, kind)
 
 
-## 对局中按 Esc 回到初始界面。主机按下等于关掉房间，另一台机器会收到"与主机断开"。
+## Esc 的语义按"现在停在哪一屏"分三层：
+##
+##   初始界面 —— 由 MainMenu 自己处理（取消正在进行的认领，见 menu.gd）
+##   等待房间 —— 离开房间，回到初始界面（与大厅上的「离开房间」按钮同一条路）
+##   对局中   —— **回到等待房间**，不离开房间
+##
+## 最后一层是刻意的：这一局需要两个人，一个人走了就打不下去；回到等待房间正好把房间
+## 交还给"等下一批人"（目录里那一项的状态也会从 playing 变回 waiting，房间重新可进）。
+## 于是"离开房间"退化成两步——局中 Esc → 房间，房间里再 Esc 才真的离开——
+## 免得一局打到一半手滑按一下就整间房没了。
+##
 ## 用 ui_cancel 而不是写死键码，这样以后做输入重绑定也不必改这里。
 func _unhandled_input(event: InputEvent) -> void:
 	if _menu.visible:
 		return
-	if event.is_action_pressed("ui_cancel"):
+	if not event.is_action_pressed("ui_cancel"):
+		return
+	if _game_started:
+		_escape_from_game()
+		return
+	_return_to_menu("已离开房间，可以重新选择或自己创建。")
+
+
+## 局中按 Esc。**有等待房间就回等待房间，没有才离开房间**：
+## 命令行直接开局（`--host` / `--join` 不带 `--lobby`）没有等待房间可回。
+func _escape_from_game() -> void:
+	if not _via_lobby:
 		_return_to_menu("已离开房间，可以重新选择或自己创建。")
+		return
+	if Net.is_server():
+		_back_to_lobby("这一局结束了，回到等待房间。")
+		return
+	_rpc_request_back_to_lobby.rpc_id(1)
+
+
+## 把这一局收回等待房间。**服务端独有**：局面的收尾必须由权威节点做，
+## 否则各端会各自回到大厅而对局状态各不相同。客户端走 _rpc_back_to_lobby。
+##
+## **不清 _join_order。** 这与 `_reset_to_lobby()` 是两件事：那一条是"人走光了、
+## 等下一批人"，清掉才对；这一条是"人还在、只是这一局不打了"——
+## 清掉的话 host_id() 会变成 0，于是谁也点不了「开始游戏」。
+func _back_to_lobby(reason: String) -> void:
+	if not Net.is_server() or not _via_lobby or not _game_started:
+		return
+	_game_started = false
+	_despawn_players()
+	_game.reset_round_for_lobby()
+	print("[lobby] %s" % reason)
+	# **先通知各端回到大厅，再下发名单。** 反过来不行：客户端会先 apply 再被
+	# _show_lobby() 里的 _lobby.open() 清掉，而下一份名单要等到有人进出才发。
+	# 这一条与 keep_roster 是两层保险：前者管顺序，后者保证即使名单晚到，
+	# 客户端手上也是那份仍然准确的旧名单（人一个都没变）。
+	if not multiplayer.get_peers().is_empty():
+		_rpc_back_to_lobby.rpc(reason)
+	_show_lobby(true)
+	# 名单与目录登记一起刷新（_broadcast_lobby 里含 _refresh_registration）：
+	# 登记里 state 回到 waiting，房间因此在别人的列表里重新变成可进。
+	_broadcast_lobby()
+	# 放在最后：apply() 会把临时说明清掉（它要让位给按名单推出来的小结），
+	# 因此这一句必须写在最后一次 apply() 之后。
+	_lobby.set_message(reason)
 
 
 ## 对方应当填的 "地址:端口"。优先用 `--advertise` 给的值，否则用本机的局域网地址。
@@ -1016,7 +1087,36 @@ func _rpc_game_started() -> void:
 	_game_started = true
 	_hide_lobby()
 	_leave_menu_for_game()
-	_set_notice("对局开始。按 Esc 返回初始界面。")
+	_set_notice("对局开始。按 Esc 回到等待房间。")
+
+
+## 房间通知大家回到等待房间（有人在局中按了 Esc）。
+##
+## **连接不断**——这与"离开房间"是两件事。
+@rpc("authority", "call_remote", "reliable")
+func _rpc_back_to_lobby(reason: String) -> void:
+	_game_started = false
+	# 客户端也要自己清角色：那种销毁通知是随 MultiplayerSpawner 走的，
+	# 而这句 RPC 与它谁先到不确定；不自己清的话下一次开局会看到"场上已经有 2 个角色"。
+	_despawn_players()
+	_game.reset_round_for_lobby()
+	# keep_roster：各端手上的名单就是这份房间此刻的真实成员（只是这一局不打了），
+	# 而下一次名单下发要等下一次有人进出——清掉的话会一直停在"正在等待房间信息…"。
+	_show_lobby(true)
+	_lobby.set_message(reason)
+
+
+## 客户端请房间把大家收回等待房间（局中按了 Esc）。
+##
+## **不校验发送者是不是房主**：这一局需要两个人，一个人要走时那一局本来就打不下去，
+## 而回到等待房间正好把房间交还给"等下一批人"。挡着不让退，他只能直接关掉游戏——
+## 而那间房会卡在 playing（在别人的列表里永远显示"进行中"且点不动）。
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_back_to_lobby() -> void:
+	if not Net.is_server():
+		return
+	print("[lobby] peer %d 请求回到等待房间" % multiplayer.get_remote_sender_id())
+	_back_to_lobby("有玩家结束了这一局，回到等待房间。")
 
 
 ## 名单下发。每次有人进出都重发一份完整的，而不是发增量：

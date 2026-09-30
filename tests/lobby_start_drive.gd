@@ -3,7 +3,10 @@ extends Node
 ##
 ## 用法（以场景为入口跑一个**客户端**，两个客户端都跑它）：
 ##   godot --headless --path . res://tests/lobby_start_drive.tscn -- \
-##         --join <网关或主机> --port 27015 --lobby
+##         --join <网关或主机> --port 27015 --lobby [--rename=名字] [--escape]
+##
+## `--escape` 额外验一段：开局之后房主按 Esc → 两端回到等待房间、房主不变、
+## 而且还能再开一局。它是"局中 Esc 不该退出房间"这条需求的自动检查。
 ##
 ## 为什么要它：headless 的客户端点不了按钮，而"人齐才允许开始"是需求的核心，
 ## 而 tools/net-smoke.mjs 走的全是 `--host`/`--join` 的"连上即开局"，
@@ -35,12 +38,27 @@ var _frames := 0
 ## 房间名是 UTF-8、跨 HTTP 与 JSON 传两跳，光看代码看不出它有没有被截断。
 var _rename_to := ""
 var _renamed := false
+## `--escape`：开局之后房主按 Esc，验"回到等待房间"那一段。
+var _escape_test := false
+## Esc 那一段的阶段：0=未开始 1=等回大厅 2=再开一局 3=等第二局
+var _escape_stage := 0
+var _escape_left := 0.0
+## 进入 Esc 那一段之前本机是不是房主。回到房间之后要对比它。
+var _was_host := false
+## Esc 那一段有断言不成立。**收集而不是立刻 quit**：
+## 后面还要走"再开一局"才能完整地验"房主身份没丢"，半路退出就查不到那一条。
+var _escape_failed := false
+## 每一次等段的上限（秒）。
+const ESCAPE_SETTLE := 3.0
+const ESCAPE_LIMIT := 25.0
 
 
 func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--rename="):
 			_rename_to = arg.substr("--rename=".length())
+		elif arg == "--escape":
+			_escape_test = true
 	_main = MAIN_SCENE.instantiate()
 	# **必须挂到 /root 下、并延用 "Main" 这个名字。**
 	# 入口脚本上的 @rpc 走的是固定路径 /root/Main（与 Game 的 /root/Main/Game 同理），
@@ -68,7 +86,14 @@ func _process(delta: float) -> void:
 	if _settle_left > 0.0:
 		_settle_left -= delta
 		if _settle_left <= 0.0:
-			_finish()
+			if _escape_test:
+				_start_escape_test()
+			else:
+				_finish()
+		return
+
+	if _escape_stage > 0:
+		_tick_escape(delta)
 		return
 
 	var started := bool(_main.get("_game_started"))
@@ -116,12 +141,89 @@ func _process(delta: float) -> void:
 		get_tree().quit(1)
 
 
+## 开局之后进入 Esc 那一段。
+##
+## **只有房主真的按**（与真人一致：无头环境里没人能点，所以由驱动器代按）。
+## 另一端什么都不做，它要证明的是"那个通知真的广播到了客户端"——
+## 只断言房主那侧不够，因为房主是自己触发的。
+func _start_escape_test() -> void:
+	var lobby = _main.get("_lobby")
+	_was_host = lobby != null and bool(lobby.get("_is_host"))
+	_escape_stage = 1
+	_escape_left = ESCAPE_LIMIT
+	if not _was_host:
+		print("[drive] 非房主：等房主按 Esc")
+		return
+	print("[drive] 房主：按 Esc（应当回到等待房间，而不是离开房间）")
+	var cancel := InputEventAction.new()
+	cancel.action = "ui_cancel"
+	cancel.pressed = true
+	_main.call("_unhandled_input", cancel)
+
+
+func _tick_escape(delta: float) -> void:
+	_escape_left -= delta
+	var started := bool(_main.get("_game_started"))
+	var lobby = _main.get("_lobby")
+	match _escape_stage:
+		1:
+			# 等"回到等待房间"：入口脚本的 _game_started 变回 false、且大厅可见。
+			if not started and lobby != null and bool(lobby.get("visible")):
+				var count := int(lobby.get("_player_count"))
+				# 这三条就是这一段的全部价值：
+				#   人还在（不是"离开房间"）、房主没变（_join_order 没被清）、场上没人
+				_ok(count >= 2, "回到房间后名单里还有 %d 人（不是离开了房间）" % count)
+				_ok(bool(lobby.get("_is_host")) == _was_host,
+					"回到房间后房主没变（本机此前是房主=%s）" % _was_host)
+				_ok(_player_count() == 0, "回到房间后场上没有角色（实际 %d 个）" % _player_count())
+				print("[drive] 回到等待房间：%s" % _role())
+				_escape_stage = 2
+				_escape_left = ESCAPE_SETTLE
+				return
+		2:
+			if _escape_left > 0.0:
+				return
+			# 再开一局。这一步验的是 _join_order 没被清：清掉的话 host_id() 会变成 0，
+			# 房主自己也不再是房主，于是谁也开不了下一局（而界面上只是按钮变灰）。
+			if _was_host:
+				print("[drive] 房主：再开一局（验房主身份没丢）")
+				_main.call("_on_lobby_start_requested")
+			_escape_stage = 3
+			_escape_left = ESCAPE_LIMIT
+			return
+		3:
+			if started:
+				print("[drive] 第二局已开始：%s" % _role())
+				_ok(_player_count() == 2, "第二局场上也是 2 个角色（实际 %d 个）" % _player_count())
+				_finish()
+				return
+	if _escape_left > 0.0:
+		return
+	_escape_failed = true
+	push_error("[drive] Esc 那一段在第 %d 步超时（%s，已开局=%s）" % [
+		_escape_stage, _role(), started,
+	])
+	_finish()
+
+
+func _ok(condition: bool, message: String) -> void:
+	if condition:
+		print("[drive] OK: %s" % message)
+		return
+	_escape_failed = true
+	push_error("[drive] 失败：%s" % message)
+
+
 func _finish() -> void:
 	_finished = true
 	var players := _player_count()
 	print("[drive] %s：场上角色 %d 个" % [_role(), players])
 	if players < 2:
 		push_error("[drive] %s：开局之后场上只有 %d 个角色（期望 %d）" % [_role(), players, 2])
+		get_tree().quit(1)
+		return
+	if _escape_failed:
+		push_error("[drive] %s：Esc 那一段有断言不成立（见上面的失败行）" % _role())
 		get_tree().quit(1)
 		return
 	print("[drive] %s：通过" % _role())

@@ -238,7 +238,7 @@ theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
 theme_override_font_sizes/font_size = 15
 text = "对局中
 A / D 移动    空格 跳跃    E 技能    Q 交换角色
-R 本关重来    Esc 回到这里"
+R 本关重来    Esc 回到等待房间"
 vertical_alignment = 2
 
 [node name="Footer" type="VBoxContainer" parent="Root/Layout"]
