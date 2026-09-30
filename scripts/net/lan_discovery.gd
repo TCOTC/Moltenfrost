@@ -247,15 +247,14 @@ static func decode_beacon(payload: PackedByteArray) -> Dictionary:
 	return json.data
 
 
-## 房间名的默认值。用系统登录名，让局域网里的另一个人能认出是谁创建的房间。
-## 放在这里是因为创建房间的一方（scripts/main.gd）与初始界面都要用它。
+## 房间名的默认值。
+##
+## **不要用系统登录名。** 原来用的是 `OS.get_environment("USERNAME")`，那在局域网里
+## 是无害的（只有同网段的人看得到，而且那种场景本来就知道对面是谁），但公网房间会把
+## 房间名登记到目录、展示给所有人看——那时这个名字就成了**操作系统用户名的泄露**。
+## 现在给一个中性名字，真正的名字由房主在大厅里改（房间名由房主配置）。
 static func default_room_name() -> String:
-	var who := OS.get_environment("USERNAME")
-	if who.is_empty():
-		who = OS.get_environment("USER")
-	if who.is_empty():
-		who = "玩家"
-	return "%s 的房间" % who
+	return "未命名房间"
 
 
 # ---------------------------------------------------------------- 内部

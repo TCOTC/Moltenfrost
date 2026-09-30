@@ -55,6 +55,8 @@ const STOP_FILE_INTERVAL := 0.2
 ## 而广播要一直持续到对局结束（别人随时可能打开界面找房间）。
 var _menu: MainMenu = null
 var _discovery: LanDiscovery = null
+## 向房间目录登记自己的那个客户端。只在公网房间里用到。
+var _directory_client: DirectoryClient = null
 ## 等待房间。它只在**界面路径**上出现（命令行 --host/--join 仍是「连上即开局」）。
 var _lobby: Lobby = null
 ## 最近一次从服务端收到的大厅信息里，房主是谁。客户端唯一的来源，见 is_local_host()。
@@ -74,8 +76,14 @@ var _room_name: String = ""
 var _join_target: String = ""
 ## `--advertise` 给的对外地址，只用于提示文案。空表示没给。
 var _advertise: String = ""
-## 服务端只在这个地址上监听。空 = 通配（局域网房间用）；公网房间固定为环回。
+## 服务端只在这个地址上监听。空 = 通配（正常情况）。
 var _bind_ip: String = ""
+## 房间目录的地址（HOST:PORT）。**传了它就表示本房间是公网房间**：
+## 会向目录登记自己，且不再往局域网广播。见 docs/公网房间方案.md 的路线 A。
+var _directory: String = ""
+## 本房间的容量。以前由网关代管（--max-per-room），现在归房间自己，
+## 因为它要随登记报给目录——列表里显示的"几个人"必须与房间的判断一致。
+var _max_players: int = 2
 var _port: int = 0
 var _notice: String = ""
 ## peer id 到槽位的对应，只在服务端维护。
@@ -124,8 +132,13 @@ func _build_menu() -> void:
 	add_child(_lobby)
 	_lobby.start_requested.connect(_on_lobby_start_requested)
 	_lobby.leave_requested.connect(_on_lobby_leave_requested)
+	_lobby.rename_requested.connect(_on_lobby_rename_requested)
 	_discovery = LanDiscovery.new()
 	add_child(_discovery)
+	# 目录客户端也建在这里：房间登记与大厅状态（人数、开局）同时变化，
+	# 放在同一个节点上就不必让别处知道"该什么时候刷新登记"。
+	_directory_client = DirectoryClient.new()
+	add_child(_directory_client)
 
 
 func _start_session() -> void:
@@ -133,6 +146,8 @@ func _start_session() -> void:
 	_port = int(opts.get("port", Net.DEFAULT_PORT))
 	_advertise = String(opts.get("advertise", ""))
 	_bind_ip = String(opts.get("bind", ""))
+	_directory = String(opts.get("directory", ""))
+	_max_players = int(opts.get("max_players", 2))
 	_stats_enabled = opts.has("net_stats")
 	# 手感数值可临时覆盖，便于不动代码地扫参。不给参数时取脚本里的默认值，
 	# 因此这里只是把命令行值写回同一个静态变量；推算式见 player.gd 里各自的注释。
@@ -157,19 +172,20 @@ func _start_session() -> void:
 	# 与 [feel] 行同一个道理：外部配置文件最容易出的问题是"改了但没生效"，
 	# 而一行日志就能把它变成一眼可见；不打印的话只能靠打开界面看列表才知道。
 	ProductConfig.load_from_disk()
-	print("[config] 官方房间：%s" % ProductConfig.describe())
+	print("[config] 官方房间目录：%s" % ProductConfig.describe())
 	_report_feel()
 
 	if opts.has("join"):
 		# `--lobby` 对两个方向都适用：公网房间的客户端也停在大厅等人开局，
-		# 而它只能以客户端身份加入（见 docs/公网房间方案.md 路线 ②）。
+		# 而它只能以客户端身份加入。
 		# 不带则仍然是"连上即开局"——专用服务端与交付前自检依赖它。
-		_begin_join(String(opts["join"]), _port, opts.has("lobby"))
+		_begin_join(String(opts["join"]), _port, opts.has("lobby"),
+			Lobby.Kind.PUBLIC if opts.has("public_room") else Lobby.Kind.LAN)
 		return
 
 	# 无头运行时没有人能点界面，因此直接当专用服务端——AGENTS.md 的交付前自检用的就是这条路径。
-	# 带了 `--lobby` 时改为停在大厅等人开始：公网房间由网关按需分配玩家，
-	# 谁先到谁当房主，因此服务端不能自己就开局（见 docs/公网房间方案.md 路线 ②）。
+	# 带了 `--lobby` 时改为停在大厅等人开始：公网房间谁先到谁当房主，
+	# 因此服务端不能自己就开局（见 docs/公网房间方案.md）。
 	if DisplayServer.get_name() == "headless":
 		_host_game("", _port, true, opts.has("lobby"))
 		return
@@ -277,6 +293,9 @@ func _apply_lobby(info: Dictionary) -> void:
 func _broadcast_lobby() -> void:
 	if _lobby != null and _lobby.visible:
 		_refresh_lobby()
+	# 登记与大厅名单是同一批信息的两个去处（一个给房间里的人看，一个给外面的人看），
+	# 所以刷新点合并在这里——少了任何一处都会出现"大厅里显示 2 人、而列表里还是 1 人"。
+	_refresh_registration()
 	if not in_lobby():
 		return
 	if Net.is_server() and not multiplayer.get_peers().is_empty():
@@ -384,6 +403,38 @@ func _on_lobby_leave_requested() -> void:
 	_return_to_menu("已离开房间，可以重新选择或自己创建。")
 
 
+## 房主改了房间名。
+##
+## **在公网房间里房主是一个普通客户端**，而名单与目录登记都由房间那边发出，
+## 所以本地改名只改得动自己这一份，别人与目录都看不到（实测踩到：客户端日志里
+## 改名成功、目录里还是旧名字）。因此非服务端要发 RPC 请房间去改，
+## 再由房间广播给各端、并登记给目录——名字因此始终只有一份来源。
+func _on_lobby_rename_requested(new_name: String) -> void:
+	if not is_local_host():
+		return
+	var cleaned := new_name.strip_edges()
+	if cleaned.is_empty():
+		return
+	if Net.is_server():
+		_apply_room_name(cleaned)
+		return
+	print("[lobby] 请房间改名：「%s」" % cleaned)
+	_rpc_request_rename.rpc_id(1, cleaned)
+
+
+## 落地改名。服务端独有（本地设名 + 广播给各端 + 刷新目录登记）。
+func _apply_room_name(new_name: String) -> void:
+	# 长度按大厅与服务端共用的那个上限定。两处各写一份是刻意的：
+	# 这里挡的是"绕过界面直接调 RPC"，而大厅那一位挡的是手滑输入——
+	# 而"服务端假定输入已被清洗过"是这类接口最常见的漏洞。
+	var cleaned := new_name.strip_edges().substr(0, Lobby.NAME_MAX_CHARS)
+	if cleaned.is_empty() or cleaned == _room_name:
+		return
+	_room_name = cleaned
+	print("[lobby] 房间改名：%s" % cleaned)
+	_broadcast_lobby()
+
+
 ## 从大厅进入对局。**服务端独有**，由房主那一次点击触发。
 ##
 ## 三步的顺序不能换：先生成角色、再通知客户端、最后切本机。
@@ -402,6 +453,9 @@ func _start_game() -> void:
 	_hide_lobby()
 	_leave_menu_for_game()
 	_set_notice("对局开始。按 Esc 返回初始界面。")
+	# 开局要立刻报给目录：它据此把这间房标为不可进（"还在等"是唯一能挡住
+	# 陌生人半路插进来的东西，所以这一格的时效性不能等下一个周期）。
+	_refresh_registration()
 
 
 ## 创建房间：本机开始监听，并且（非专用服务端时）本机也是一个玩家。
@@ -419,12 +473,16 @@ func _host_game(room_name: String, port: int, dedicated: bool, via_lobby: bool =
 	# 而日志里只有一句“已连接到主机”。这个坑实测踩过一轮（服务器端永远不广播）。
 	_via_lobby = via_lobby
 	_game_started = not via_lobby
-	# 只绑环回的房间就是**网关背后那件**（见 docs/公网房间方案.md 路线 ②），
-	# 因此它的类型是公网。这件事服务端自己就能判定（看绑定地址），
-	# 不需要别人告诉它——否则大厅会把它显示成局域网，与实际不符。
-	if _bind_ip.begins_with("127.") or _bind_ip == "::1":
+	# **配了目录就是公网房间。** 用这一点判定，而不是看绑在哪块网卡上：
+	# 路线 A 之后房间对外监听（客户端直连它），只看绑定地址已经分不出公网与局域网。
+	# 这两件事（对外监听 + 进目录）本来就是同一件事的两面。
+	if not _directory.is_empty():
 		_room_kind = Lobby.Kind.PUBLIC
-	if Net.host(_port, dedicated, _bind_ip) != OK:
+	# 目录是公网房间与外界之间的唯一"身份来源"，写坏了就整间房都联系不上目录，
+	# 所以先把它自己报一次。
+	if _room_kind == Lobby.Kind.PUBLIC and _directory.is_empty():
+		push_warning("房间类型是公网，但没有配 --directory，它不会出现在任何列表里")
+	if Net.host(_port, dedicated, _bind_ip, _max_players) != OK:
 		# 唯一可预期的失败是端口被占用（例如开发实例还开着同一个端口）。
 		# 有画面时回到界面让人换端口重试，无头时只能把原因写进日志。
 		var message := "端口 %d 被占用，无法创建房间。换一个端口再试。" % _port
@@ -434,6 +492,8 @@ func _host_game(room_name: String, port: int, dedicated: bool, via_lobby: bool =
 			_show_menu(_port)
 			_menu.set_message(message)
 		return
+	if _room_kind == Lobby.Kind.PUBLIC:
+		_start_registering()
 	if via_lobby:
 		_show_lobby()
 		return
@@ -447,9 +507,10 @@ func _host_game(room_name: String, port: int, dedicated: bool, via_lobby: bool =
 ## 连接远端主机。界面列表里选中的房间与手动填写的地址都由这里发起。
 ## 连接结果要等 Net.join_succeeded / join_failed，因此这里不切画面：
 ## 失败时界面还留在屏幕上，可以直接换一个房间重试。
-func _begin_join(address: String, port: int, via_lobby: bool = false) -> void:
+func _begin_join(address: String, port: int, via_lobby: bool = false, kind: int = Lobby.Kind.LAN) -> void:
 	_join_target = "%s:%d" % [address, port]
 	_port = port
+	_room_kind = kind
 	_via_lobby = via_lobby
 	_game_started = not via_lobby
 	_set_notice("正在连接 %s …" % _join_target)
@@ -461,6 +522,9 @@ func _begin_join(address: String, port: int, via_lobby: bool = false) -> void:
 ## 断开之后必须自己清掉角色节点：客户端收不到服务端发来的销毁包（连接已经断了），
 ## 留着就会看到停在原地的角色。
 func _return_to_menu(message: String) -> void:
+	# 先注销再断会话：注销是一次 HTTP 请求，它需要进程还活着、且目录还在。
+	# 不注销也不会出事（目录靠 TTL 清理），但那样列表里会多留几秒一个已经没了的房间。
+	_stop_registering()
 	Net.close()
 	_discovery.stop()
 	_clear_players()
@@ -501,13 +565,11 @@ func _start_announcing() -> void:
 	if Net.port <= 0:
 		print("[lan] 本机端口由系统分配，不广播房间（别人拿不到可以连接的端口）")
 		return
-	# 绑环回的房间不广播：局域网里的人即使看到这个房间也连不上——房间的地址是
-	# 127.0.0.1，游戏端口也只在本机环回上监听。广播只会往别人的列表里塞一个假条目。
-	# 公网房间靠网关发现，不需要广播。
-	if _bind_ip.begins_with("127.") or _bind_ip == "::1":
-		print("[lan] 房间只绑在环回上（%s），不广播到局域网：对方应经网关 %s 加入" % [
-			_bind_ip, _join_hint(),
-		])
+	# 公网房间不广播：局域网里的人即使看到也连不上（房间地址是公网域名），
+	# 而且它会往别人的列表里塞一个重复条目（同一个人在目录里也看得到它）。
+	# 它的发现渠道是目录，不是广播。
+	if _room_kind == Lobby.Kind.PUBLIC:
+		print("[lan] 公网房间不往局域网广播（它在目录里，地址 %s）" % _join_hint())
 		return
 	_discovery.announce(func() -> Dictionary:
 		return {
@@ -528,35 +590,86 @@ func _start_announcing() -> void:
 		print("[lan] 未能自动判断对外地址，跨网联机时请用 --advertise <地址或域名> 指定")
 
 
-func _on_menu_host_requested(room_name: String, port: int, kind: int) -> void:
-	if kind == Lobby.Kind.PUBLIC:
-		_create_public_room(room_name)
+# ---------------------------------------------------------------- 房间目录
+
+## 开始向目录登记自己。只有公网房间会走到这里（见 _host_game）。
+##
+## 传的是**回调**而不是一份正文：房间的状态（名字、人数、有没有开局）随时会变，
+## 而回调让每次发送都重新取一遍当前值（见 DirectoryClient._provider 的说明）。
+func _start_registering() -> void:
+	_directory_client.start_registering("http://%s" % _directory, _registration_body)
+	print("[dir] 已开始向目录 %s 登记" % _directory)
+
+
+## 挑目录客户端的定时器，立刻发一次。
+func _refresh_registration() -> void:
+	if _room_kind != Lobby.Kind.PUBLIC or _directory.is_empty():
 		return
+	_directory_client.refresh_now()
+
+
+func _stop_registering() -> void:
+	if _directory_client != null:
+		_directory_client.stop_registering()
+
+
+## 登记给目录的内容。形状与 tools/room-directory.py 的接口一致。
+## **每次发送时现取**（它是一个回调），因此这里读到的都是最新状态。
+func _registration_body() -> Dictionary:
+	var parts := _advertised_parts()
+	if String(parts.get("host", "")).is_empty():
+		# 没有对外地址就无法登记：目录不知道该把玩家指向哪里。
+		# 返回空字典让客户端这一轮不发（下一个周期再试），
+		# 因为地址有可能晚一步才拿得到（网卡起来得慢）。
+		return {}
+	return {
+		"name": _room_name,
+		"host": parts.get("host", ""),
+		"port": int(parts.get("port", 0)),
+		"players": _player_total(),
+		"max": _max_players,
+		# 已经开局就报 playing。目录据此把它标为不可进——
+		# 没做密码也没做好友，"还在等"是唯一能挡住陌生人半路插进来的东西。
+		"state": "playing" if _game_started else "waiting",
+	}
+
+
+## 房间里一共有几个人（含主机自己）。专用服务端不算玩家。
+func _player_total() -> int:
+	return multiplayer.get_peers().size() + (0 if Net.is_dedicated() else 1)
+
+
+## 房间的对外 "host:port"，拆成两半。地址优先用 `--advertise`（云服务器上
+## 网卡只有 VPC 私网地址，自动探测出来的对外没有意义），端口默认是本房间自己的端口。
+func _advertised_parts() -> Dictionary:
+	var host := ""
+	var port := _port
+	if not _advertise.is_empty():
+		if _advertise.contains(":"):
+			host = _advertise.get_slice(":", 0)
+			port = int(_advertise.get_slice(":", 1))
+		else:
+			host = _advertise
+	else:
+		for address in _lan_addresses():
+			host = address
+			break
+	return {"host": host, "port": port}
+
+
+func _on_menu_host_requested(room_name: String, port: int, kind: int) -> void:
+	# 走到这里的只可能是局域网：公网房间是预先存在的（目录里一列），
+	# "创建公网房间"实际上是"加入一间空房"，界面那边会直接发 join_requested。
 	_room_kind = kind
 	_host_game(room_name, port, false, true)
 
 
-## 「创建房间 → 公网」。
-##
-## 它**不是在本机开服务端**：公网房间必须开在一台有公网地址的机器上（见
-## docs/公网房间方案.md）。因此这里走的是"连到官方网关，由它分配一个房间"，
-## 与列表里点「官方房间」是同一个网络动作。区别只在界面怎么描述这件事，
-## 以及房间里的人从哪来（网关把下一个人也分到这个房间）。
-##
-## 代价要说清楚：房间名是官方服务端给的，玩家在这里填的名字用不上（服务端不知道）。
-## 想让玩家自己命名，需要把名字随握手一起发（方案文档里的 ②b，要自定义 peer）。
-func _create_public_room(room_name: String) -> void:
-	_room_kind = Lobby.Kind.PUBLIC
-	var host := ProductConfig.official_host()
-	var port := ProductConfig.official_port()
-	print("[session] 创建公网房间：经官方网关 %s:%d 分配（本机填的名字「%s」由服务端忽略）" % [
-		host, port, room_name,
-	])
-	_begin_join(host, port, true)
-
-
-func _on_menu_join_requested(address: String, port: int) -> void:
-	_begin_join(address, port, true)
+## 「创建房间 → 公网」在界面上就是「加入一间空房」——路线 A 里公网房间是**预先存在的**
+##（目录里始终列着那几间），因此没有一个"在本机开服务端"的动作可做。
+## 这一段旧实现（连官方网关领房间）已随路线 A 作废，保留这段说明是为了让后来的人
+## 明白"创建公网房间"为什么不见了，而不是以为它被漏掉了。
+func _on_menu_join_requested(address: String, port: int, kind: int) -> void:
+	_begin_join(address, port, true, kind)
 
 
 ## 对局中按 Esc 回到初始界面。主机按下等于关掉房间，另一台机器会收到"与主机断开"。
@@ -572,17 +685,13 @@ func _unhandled_input(event: InputEvent) -> void:
 ## 存在的理由：云服务器上 IP.get_local_addresses() 只有 VPC 私网地址（172.16.x.x），
 ## 对外没有意义；而公网地址是 NAT 映射的，网卡上根本不存在，程序无从得知。
 ##
-## `--advertise` 允许带端口（"host:port"）。公网房间必须这么给：它自己监听的是
-## 40000 段的一个环回端口，而对方该填的是**网关**的 27015，两者不同，
-## 所以不能让这里用 _port 去拼。局域网仍然只给地址，端口取本机实际监听的那个。
+## `--advertise` 允许带端口（"host:port"）。
+## **这个值同时也是登记到目录的那个地址**，因此它必须是对外真能连上的那个。
 func _join_hint() -> String:
-	if not _advertise.is_empty():
-		return _advertise if _advertise.contains(":") else "%s:%d" % [_advertise, _port]
-	if _port <= 0:
+	var parts := _advertised_parts()
+	if String(parts.get("host", "")).is_empty() or int(parts.get("port", 0)) <= 0:
 		return ""
-	for address in _lan_addresses():
-		return "%s:%d" % [address, _port]
-	return ""
+	return "%s:%d" % [parts["host"], int(parts["port"])]
 
 
 ## 本机的 IPv4 地址，"最像局域网地址"的排在前面。跳过环回与链路本地（169.254.*）：
@@ -667,6 +776,10 @@ func _reset_to_lobby() -> void:
 	_clear_players()
 	print("[lobby] 房间已回到空闲状态，等下一批玩家")
 	_show_lobby()
+	# 立刻把"回到等待中"报给目录。不这么做的话它要等下一个周期（最多 2 秒），
+	# 而刚走完一局的房间在这两秒里仍显示"进行中"、不可进——
+	# 真机上看起来就像那间房坏了。
+	_refresh_registration()
 
 
 ## MultiplayerSpawner 的生成函数。各端都会用同一份参数调用它，
@@ -878,6 +991,21 @@ func _rpc_game_started() -> void:
 @rpc("authority", "call_remote", "reliable")
 func _rpc_lobby_info(info: Dictionary) -> void:
 	_apply_lobby(info)
+
+
+## 客户端请服务端改名（公网房间里房主是个普通客户端，见 _on_lobby_rename_requested）。
+##
+## `any_peer` 是必须的：发起者不是权威节点。因此**服务端必须自己校发送者**，
+## 不能假定"能调到我这个方法的都是好人"——否则任何一个客户端都能把房间名改掉。
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_rename(new_name: String) -> void:
+	if not Net.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender != host_id():
+		print("[lobby] 忽略 peer %d 的改名请求：房主是 peer %d" % [sender, host_id()])
+		return
+	_apply_room_name(new_name)
 
 
 ## 客户端向服务端请求开局（公网房间里房主是个普通客户端，见 _on_lobby_start_requested）。

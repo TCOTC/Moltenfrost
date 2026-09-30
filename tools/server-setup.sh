@@ -12,8 +12,8 @@
 # 用法（参数都由 deploy-server.mjs 传）：
 #   bash server-setup.sh --godot-zip /tmp/godot.zip --bundle /tmp/mf.bundle
 #                       [--port 27015] [--enable-service] [--skip-import]
-#                       [--gateway [--gateway-port 27015] [--room-base-port 40001]
-#                                 [--rooms-count 2] [--max-per-room 2]]
+#                       [--directory [--directory-port 27017] [--room-base-port 40001]
+#                                    [--rooms-count 2] [--max-per-room 2]]
 
 set -euo pipefail
 
@@ -25,14 +25,17 @@ SERVICE_NAME="moltenfrost"
 
 GODOT_ZIP=""
 BUNDLE=""
+# 只用于**不带 --directory** 的单房间模式。带 --directory 时玩家连的是房间段
+# （ROOM_BASE_PORT 起），27015 上不跑任何东西，这个值只剩兜底与日志措辞的作用。
 PORT="27015"
 ADVERTISE=""
 ENABLE_SERVICE=0
 SKIP_IMPORT=0
-# 网关模式（--gateway）：对外只开 27015 一个 UDP 端口，由网关把每个客户端流
-# 分流到各自的房间进程（绑环回）。设计依据见 docs/公网房间方案.md 路线 ②。
-GATEWAY=0
-GATEWAY_PORT="27015"
+# 房间目录模式（--directory）：房间对外监听并登记到目录，客户端从列表里选一间直连。
+# 取代了之前那个单端口 UDP 网关：要让玩家选房间，就必须让每间房有对外地址与端口，
+# 于是那个“把包转给某间房”的转发器就没有存在理由了。见 docs/公网房间方案.md。
+DIRECTORY=0
+DIRECTORY_PORT="27017"
 ROOM_BASE_PORT="40001"
 ROOM_COUNT="2"
 # 每房间人数上限。**默认 2 不是保守取值，是上限本身**：关卡只配了两个出生点
@@ -49,8 +52,8 @@ while [[ $# -gt 0 ]]; do
     --enable-service) ENABLE_SERVICE=1; shift ;;
     --skip-import) SKIP_IMPORT=1; shift ;;
     --godot-prefix) GODOT_PREFIX="$2"; GODOT_BIN="${GODOT_PREFIX}/godot"; shift 2 ;;
-    --gateway) GATEWAY=1; shift ;;
-    --gateway-port) GATEWAY_PORT="$2"; shift 2 ;;
+    --directory) DIRECTORY=1; shift ;;
+    --directory-port) DIRECTORY_PORT="$2"; shift 2 ;;
     --room-base-port) ROOM_BASE_PORT="$2"; shift 2 ;;
     --rooms-count) ROOM_COUNT="$2"; shift 2 ;;
     --max-per-room) MAX_PER_ROOM="$2"; shift 2 ;;
@@ -171,26 +174,6 @@ else
   echo "class cache rebuilt"
 fi
 
-# ---------------------------------------------------------------- 5. 网关
-
-# 网关是 C 写的（选它的依据见 tools/net-gateway.c 的文件头：零新增依赖、
-# CPU 每包最低、尾延迟最好）。服务器自带 gcc，因此这里只需一条命令，
-# 不装任何工具链，产物也只有 22 KB。
-#
-# 编译失败不能静默放过：没有它就没有公网房间，而"房间进程还在跑"会让人
-# 以为只是连不上，很难联想到是网关没编出来。
-if [[ "$GATEWAY" == "1" ]]; then
-  say "4b/6 compile the UDP gateway"
-  cd "$REPO_DIR"
-  mkdir -p build
-  gcc -O2 -Wall -Wextra -o build/net-gateway tools/net-gateway.c
-  if [[ ! -x build/net-gateway ]]; then
-    echo "gateway did not build: expected build/net-gateway" >&2
-    exit 1
-  fi
-  echo "built: $(ls -l build/net-gateway | awk '{print $5}') bytes"
-fi
-
 # ---------------------------------------------------------------- 5. 自检
 
 # 起一次服务端再退出，确认没有脚本错误。用 --port 0 让系统分配端口，
@@ -217,10 +200,9 @@ if [[ "$ENABLE_SERVICE" == "1" ]]; then
   # 以后要多开几场对局，就是多启几个实例、每个占一个端口。
   # %i 是实例名，因此 `systemctl start moltenfrost@27016` 就是第二个房间。
   #
-  # 对外地址（--advertise）在网关模式下**必须带端口**：房间自己监听的是 40000 段的
-  # 环回端口，而对方该填的是网关的 27015，两者不同（见 main.gd 的 _join_hint）。
+  # 对外地址（--advertise）要带上**每个房间自己的端口**：客户端是直连房间的，
+  # 而目录里那一项就指向它。所以下面逐实例拼 --advertise <域名>:<该房的端口>。
   advertise_arg=""
-  room_bind_arg=""
   room_lobby_arg=""
   # 下面两个 heredoc **不要用引号包 EOF，也不要在这里写反引号或 $( )**：
   # 不加引号的 heredoc 会把内容当命令替换展开。这个坑已经真实踩到过——
@@ -228,23 +210,18 @@ if [[ "$ENABLE_SERVICE" == "1" ]]; then
   # 单元里的注释静默变成了残缺的一句（不报错，只是注释少了一段），
   # 后来因为文件里有 set -o pipefail 才以「main.gd: command not found」失败。
   # 要写 `命令名` 这类文字就写成普通文字，或者用 $(...) 的转义形式。
-  if [[ -n "$ADVERTISE" ]]; then
-    if [[ "$GATEWAY" == "1" ]]; then
-      advertise_arg=" --advertise ${ADVERTISE}:${GATEWAY_PORT}"
-    else
-      advertise_arg=" --advertise ${ADVERTISE}"
-    fi
-  else
+  if [[ -z "$ADVERTISE" ]]; then
     echo "WARNING: no --advertise given. On a cloud server IP.get_local_addresses() returns"
-    echo "         only the VPC private address, so the 'others should join at' log line will"
-    echo "         be useless. Re-run with --advertise <domain-or-ip>."
+    echo "         only the VPC private address, so the address rooms register is unroutable"
+    echo "         and the directory entries will point nowhere. Re-run with --advertise <domain>."
+    # 不拼出 `--advertise :40001` 这种畸形参数：那会让房间拿一个空地址去登记，
+    # 而目录会老老实实把它当地址存下来。宁可不传，让房间用自己的探测结果。
+    advertise_arg=""
+  else
+    advertise_arg=" --advertise ${ADVERTISE}:%i"
   fi
-  if [[ "$GATEWAY" == "1" ]]; then
-    # 只绑环回：房间的端口因此不出现在任何对外网卡上，外部只能经网关进来。
-    # 安全边界因此不单纯靠安全组撑着（那一段本来也没放行）。
-    room_bind_arg=" --bind 127.0.0.1"
-    # 停在大厅等人开局：网关把玩家分到房间之后，谁先到谁当房主，
-    # 由房主点开始（见 main.gd 的 host_id 与 lobby.gd）。
+  if [[ "$DIRECTORY" == "1" ]]; then
+    # 停在大厅等人开局：谁先到谁当房主（见 main.gd 的 host_id）。
     room_lobby_arg=" --lobby"
   fi
   sudo tee "/etc/systemd/system/${SERVICE_NAME}@.service" >/dev/null <<EOF
@@ -257,14 +234,14 @@ Wants=network-online.target
 Type=simple
 User=${USER}
 WorkingDirectory=${REPO_DIR}
-ExecStart=${GODOT_BIN} --headless --path ${REPO_DIR} -- --host --port %i${advertise_arg}${room_bind_arg}${room_lobby_arg}
+ExecStart=${GODOT_BIN} --headless --path ${REPO_DIR} -- --host --port %i${advertise_arg} --directory 127.0.0.1:${DIRECTORY_PORT} --max-players ${MAX_PER_ROOM}${room_lobby_arg}
 # 崩了就重启。服务端是无状态的（对局状态在内存里），重启只会让当前对局中断，
 # 因此不需要额外的恢复逻辑，重连即可。
 Restart=always
 RestartSec=2
-# 停止时的行为。默认就是 SIGTERM，这里写出来是为了让意图可见：
-# Godot 收到 SIGTERM 后会走正常的退出流程，main.gd 的 _exit_tree 因此能跑到、
-# 可以由服务端主动向客户端发断开通知（客户端因此不必等超时）。实测 0.4 秒内完成。
+# 停止时发 SIGTERM（systemd 的默认）。**注意它不会让 Godot 走 _exit_tree**：
+# 进程 8～24 毫秒就退出了，而 shutdown_gracefully() 那六轮 poll 本身要 240 毫秒。
+# 因此真正让客户端立刻收到通知的是下面那条 ExecStop。
 KillSignal=SIGTERM
 # **停止前先请它自己退出。** Godot 收到 SIGTERM 是立刻退出、不走 _exit_tree，
 # 于是 Net.shutdown_gracefully() 那六轮 poll 从未跑到，断开通知也就发不出来，
@@ -288,30 +265,16 @@ EOF
   fi
   echo "installed ${SERVICE_NAME}@.service"
 
-  # ------------------------------------------------------------ 网关
-  if [[ "$GATEWAY" == "1" ]]; then
-    # 房间列表在这里拼好写进单元里。
+  # ------------------------------------------------------------ 房间目录
+  if [[ "$DIRECTORY" == "1" ]]; then
+    # 目录只需要 python3（服务器自带）与这一个脚本，没有编译产物、没有额外依赖。
+    # 之前那个 C 写的网关连编译都不需要了——它的转发职责已随路线 A 消失。
     #
-    # **它不做探活，这是刻意的。** 试过"有人却不往外发包的房间算坏、选房跳过"，
-    # 实测会把刚重启的房间误判为坏，而且误判粘住（占名额的旧流要等 --idle 才回收），
-    # 结果把玩家赶到别的房间。详见 tools/net-gateway.c 的 pick_room 与方案文档。
-    # 卡死的房间靠它自己的 Restart=always 与客户端 10 秒连接超时兜住。
-    room_list=""
-    for ((i = 0; i < ROOM_COUNT; i++)); do
-      port=$((ROOM_BASE_PORT + i))
-      [[ -n "$room_list" ]] && room_list="${room_list},"
-      room_list="${room_list}127.0.0.1:${port}"
-    done
-    # --idle 30（默认是 60）：客户端**消失**多久之后释放它的名额。
-    # 客户端正常退出时会发断开通知，网关立刻就知道，所以这个值只在客户端被强杀
-    #（断网、断电、taskkill）时起作用。30 秒既不至于把短暂掉线的人踢掉，
-    # 也不会让名额被占太久——后者在重跑验证脚本时很明显（占着名额会让新一轮
-    # 客户端全被拒，看着像网关坏了）。
-    sudo tee "/etc/systemd/system/${SERVICE_NAME}-gateway.service" >/dev/null <<EOF
+    # TTL 6 秒、房间每 2 秒登记一次（三分之一）。进程被强杀时不会发"注销"，
+    # 那种情况只能靠 TTL 把它从列表里清掉。
+    sudo tee "/etc/systemd/system/${SERVICE_NAME}-directory.service" >/dev/null <<EOF
 [Unit]
-Description=Moltenfrost UDP gateway on port ${GATEWAY_PORT}
-# 网关自己会立即绑定，不依赖房间是否已起来：房间晚一步没关系，
-# 第一个进去的客户端会多等一会儿而已（等不到就超时重试）。
+Description=Moltenfrost room directory on port ${DIRECTORY_PORT}
 After=network-online.target
 Wants=network-online.target
 
@@ -319,7 +282,7 @@ Wants=network-online.target
 Type=simple
 User=${USER}
 WorkingDirectory=${REPO_DIR}
-ExecStart=${REPO_DIR}/build/net-gateway --listen ${GATEWAY_PORT} --rooms ${room_list} --max-per-room ${MAX_PER_ROOM} --idle 30 --stats 60
+ExecStart=/usr/bin/env python3 ${REPO_DIR}/tools/room-directory.py --port ${DIRECTORY_PORT} --ttl 6
 Restart=always
 RestartSec=2
 KillSignal=SIGTERM
@@ -330,7 +293,7 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
-    echo "installed ${SERVICE_NAME}-gateway.service (rooms: ${room_list})"
+    echo "installed ${SERVICE_NAME}-directory.service"
   fi
 
   sudo systemctl daemon-reload
@@ -342,14 +305,14 @@ EOF
   # 服务端日志里报的错误来自一个已经删掉的 RPC，而 git 版本显示的是新代码。
   # 只在服务已经在跑时重启；没跑就不要自作主张启动（部署与启动是两件事）。
   #
-  # 网关模式下要重启的是**网关上每个房间**：只重启 27015 那个已不再合适，
-  # 因为它已经不是游戏端口了（见下面的切换说明）。
+  # 目录模式下要重启的是**目录 + 每一间房**：那个 27015 上的单房间服务
+  # 已经不是玩家的入口了（见下面的切换说明）。
   restart_list=()
-  if [[ "$GATEWAY" == "1" ]]; then
+  if [[ "$DIRECTORY" == "1" ]]; then
     for ((i = 0; i < ROOM_COUNT; i++)); do
       restart_list+=("${SERVICE_NAME}@$((ROOM_BASE_PORT + i))")
     done
-    restart_list+=("${SERVICE_NAME}-gateway")
+    restart_list+=("${SERVICE_NAME}-directory")
   else
     restart_list+=("${SERVICE_NAME}@${PORT}")
   fi
@@ -362,19 +325,24 @@ EOF
     fi
   done
 
-  if [[ "$GATEWAY" == "1" ]]; then
+  if [[ "$DIRECTORY" == "1" ]]; then
     echo
-    echo "GATEWAY MODE. The public entry port is now ${GATEWAY_PORT}, held by the gateway;"
-    echo "rooms listen on loopback only (${ROOM_BASE_PORT}..$((ROOM_BASE_PORT + ROOM_COUNT - 1)))."
-    echo "If a standalone room is still holding ${GATEWAY_PORT}, the gateway cannot bind. Check with:"
-    echo "  systemctl is-active ${SERVICE_NAME}@${PORT}"
-    echo "  sudo systemctl disable --now ${SERVICE_NAME}@${PORT}"
-    echo "Then bring the topology up:"
-    echo "  sudo systemctl enable --now ${SERVICE_NAME}-gateway"
+    echo "DIRECTORY MODE (route A: rooms are reached directly)."
+    echo "  directory : TCP ${DIRECTORY_PORT}"
+    echo "  rooms     : UDP ${ROOM_BASE_PORT}..$((ROOM_BASE_PORT + ROOM_COUNT - 1)) (public, one per room)"
+    echo
+    echo "SECURITY GROUP must allow BOTH of these. Since the rooms listen publicly now,"
+    echo "the old single-port arrangement (UDP ${PORT}) is no longer what players connect to."
+    echo "Add: TCP:${DIRECTORY_PORT} and UDP:${ROOM_BASE_PORT}-$((ROOM_BASE_PORT + ROOM_COUNT - 1))"
+    echo "(the UDP range may be extended later when more rooms are added)."
+    echo
+    echo "Bring the topology up:"
+    echo "  sudo systemctl enable --now ${SERVICE_NAME}-directory"
     for ((i = 0; i < ROOM_COUNT; i++)); do
       echo "  sudo systemctl enable --now ${SERVICE_NAME}@$((ROOM_BASE_PORT + i))"
     done
-    echo "  logs: journalctl -u ${SERVICE_NAME}-gateway -f"
+    echo "  logs: journalctl -u ${SERVICE_NAME}-directory -f"
+    echo "  check the listing: curl -s http://127.0.0.1:${DIRECTORY_PORT}/rooms"
   else
     echo "  start:  sudo systemctl start ${SERVICE_NAME}@${PORT}"
     echo "  enable: sudo systemctl enable ${SERVICE_NAME}@${PORT}"

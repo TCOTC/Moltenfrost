@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""熔霜 · 房间目录服务
+
+它只干两件事，没有别的：**登记房间**、**回答"现在有哪些房间"**。
+客户端拿到列表后**直接连那间房的地址**，数据不再经过这里。
+（这是 docs/公网房间方案.md 的路线 A：房间直连 + 目录。为什么选它见那份文档。）
+
+## 为什么是 HTTP 而不是延续那个 UDP 网关的协议
+
+- 没有协议要设计：请求与响应都是 JSON，`GET` 一条就够
+- **`curl` 就能验**，不必先写一个客户端；这个工具的存在感因此降到最低
+- 目录是请求-响应式的、允许几百毫秒的延迟，不需要 UDP 的实时性
+- 以后想加 TLS 与限流，放到 Cloudflare 后面即可（走 HTTP 才行）
+
+只用标准库（`http.server`），因此服务器上不需要装任何东西。
+
+## 接口
+
+    POST /rooms        登记或刷新一间房
+                       body: {"name": "...", "port": N, "players": N, "max": N,
+                              "state": "waiting"|"playing", "host": "可省略"}
+                       返回 {"ok": true, "host": "<生效的地址>", "port": N}
+    DELETE /rooms?port=N   注销（正常退出时发；不发也行，靠 TTL 清掉）
+    GET  /rooms        列表
+                       返回 {"rooms": [{"name","host","port","players","max","state","age"}]}
+    GET  /health       给监控与部署脚本看的存活探针
+
+## 三个刻意的取舍
+
+**1. 地址以来源 IP 为准，不信请求体里的 host。**
+请求体里那个 `host` 只有在来源是内网/环回时才采信（房间与目录同机时就是这个情况，
+它自己也不知道对外的地址，只能由部署时用 --advertise 告诉它）。
+来自公网的登记一律把 host 改写成来源地址——否则任何人都能登记一条指向别人 IP 的
+"房间"，把我们的玩家变成往那台机器打 UDP 的流量。
+
+**2. 靠 TTL 清理，不靠注销。**
+房间每 `--ttl/3` 秒刷新一次，超过 `--ttl` 秒没消息就从列表里消失。
+进程被强杀、机器掉电时不会有"再见"，只能由这里清理。局域网探测的那套
+（定期广播 + 超时移除）已经在真机上验证过，这里沿用同一种做法。
+
+**3. 名字只做长度与控制字符的约束，不做内容审核。**
+名字是玩家输入、会展示给陌生人看，因此必须挡住控制字符（它们能让终端与日志错乱）
+并限长（否则一条几兆的名字会把列表撑坏）。UTF-8 本身没问题——JSON 与 HTTP 都是字节透明的。
+
+用法：
+    python3 room-directory.py --port 27017 [--ttl 6] [--max-rooms 64] [--verbose]
+    python3 room-directory.py --selftest        # 只验判断逻辑，不启服务
+"""
+
+import argparse
+import json
+import re
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
+
+# 房间名的最长字符数。按**字符**而不是字节算：中文一个字三字节，
+# 按字节限长会让中文名只能写三分之一。前端（GDScript 的 LineEdit）也限同一个数。
+NAME_MAX_CHARS = 24
+# 控制字符。它们会污染日志与终端，而且列表里显示出来是一堆看不见的方块。
+CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def clean_name(raw) -> str:
+    """房间名的清洗。返回的一定是可安全打印、可安全放进 JSON 的字符串。"""
+    if not isinstance(raw, str):
+        return ""
+    # 先去掉控制字符再截断：反过来的话，截断可能刚好把一个多字节字符切开。
+    text = CONTROL_CHARS.sub("", raw).strip()
+    if len(text) > NAME_MAX_CHARS:
+        text = text[:NAME_MAX_CHARS]
+    return text
+
+
+def clamp_int(raw, low: int, high: int, fallback: int) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return fallback
+    return max(low, min(high, value))
+
+
+def is_local_source(addr: str) -> bool:
+    """来源是不是本机/内网。判据与 scripts/main.gd 里挑局域网地址的那套一致。
+
+    它只影响一件事：**要不要采信请求体里的 host**。同机部署时房间从环回连过来，
+    它报的 host 是部署时用 --advertise 给的（它自己不可能知道对外的地址，
+    云服务器网卡上只有 VPC 私网地址）；而公网来源报什么都不可信。
+
+    注意内网地址也归入“可信”：能从这个网段发请求的人已经在你的内网里了，
+    那时候要担心的远不止房间列表。
+    """
+    if addr.startswith("127.") or addr.startswith("10.") or addr == "::1" or addr == "localhost":
+        return True
+    if addr.startswith("192.168."):
+        return True
+    if addr.startswith("172."):
+        second = addr.split(".")
+        if len(second) > 1 and second[1].isdigit():
+            return 16 <= int(second[1]) <= 31
+    return False
+
+
+class Room:
+    __slots__ = ("name", "host", "port", "players", "max_players", "state", "seen")
+
+    def __init__(self, name, host, port, players, max_players, state):
+        self.name = name
+        self.host = host
+        self.port = port
+        self.players = players
+        self.max_players = max_players
+        self.state = state
+        self.seen = time.monotonic()
+
+    def key(self):
+        return (self.host, self.port)
+
+    def as_dict(self):
+        return {
+            "name": self.name,
+            "host": self.host,
+            "port": self.port,
+            "players": self.players,
+            "max": self.max_players,
+            "state": self.state,
+            "age": round(time.monotonic() - self.seen, 1),
+        }
+
+    def findable(self) -> bool:
+        """能不能被玩家选中：还可以再进人。
+
+        这一条**比人数本身更重要**：本作是双人协作，一个已经开始的房间不该出现在
+        列表里让人半路插进去（会顶掉原来那个人）。界面上会显示"进行中"，但目录
+        也把判据给出来，免得每个使用方各写一份。
+
+        没做密码与好友机制（明确不做），所以"还在等"就是唯一能挡住陌生人的东西。
+        """
+        return self.state == "waiting" and self.players < self.max_players
+
+
+class Directory:
+    def __init__(self, ttl: float, max_rooms: int, verbose: bool):
+        self.ttl = ttl
+        self.max_rooms = max_rooms
+        self.verbose = verbose
+        self.lock = threading.Lock()
+        self.rooms = {}
+
+    def log(self, message: str) -> None:
+        if self.verbose:
+            print("[dir] %s" % message, flush=True)
+
+    def register(self, body: dict, source_addr: str) -> dict:
+        name = clean_name(body.get("name"))
+        port = clamp_int(body.get("port"), 1, 65535, 0)
+        if port == 0:
+            return {"ok": False, "error": "port is required"}
+        reported_host = body.get("host")
+        if isinstance(reported_host, str) and reported_host.strip() and is_local_source(source_addr):
+            # 房间与目录同机（正常部署就是这样）：它报的 host 是部署时用 --advertise 给的，
+            # 采信它。它自己不可能知道对外的地址（云服务器上网卡只有 VPC 私网地址）。
+            host = reported_host.strip()
+        else:
+            # 来自公网的登记：**以来源地址为准**，忽略它说的 host。理由见文件头。
+            host = source_addr
+        players = clamp_int(body.get("players"), 0, 4096, 1)
+        max_players = clamp_int(body.get("max"), 1, 4096, 2)
+        state = "playing" if body.get("state") == "playing" else "waiting"
+        room = Room(name or "未命名房间", host, port, players, max_players, state)
+        with self.lock:
+            key = room.key()
+            if key not in self.rooms and len(self.rooms) >= self.max_rooms:
+                return {"ok": False, "error": "too many rooms"}
+            self.rooms[key] = room
+            count = len(self.rooms)
+        self.log("register %s:%d %r players=%d/%d %s (total %d)" % (
+            host, port, room.name, players, max_players, state, count))
+        return {"ok": True, "host": host, "port": port}
+
+    def unregister(self, port: int) -> dict:
+        with self.lock:
+            for key in [k for k in self.rooms if k[1] == port]:
+                del self.rooms[key]
+        self.log("unregister port %d" % port)
+        return {"ok": True}
+
+    def listing(self) -> dict:
+        now = time.monotonic()
+        with self.lock:
+            # 顺手清掉超时的。放在这里而不是单独的定时器线程：读列表是最频繁的操作，
+            # 而"读到旧数据"恰恰是这里唯一不能出的错。
+            for key in [k for k, r in self.rooms.items() if now - r.seen > self.ttl]:
+                del self.rooms[key]
+                self.log("expired %s:%d" % key)
+            items = [r.as_dict() for r in self.rooms.values()]
+        # 排一下序：先能进的，再按人数多的在前（凑人优先），最后按端口稳定化。
+        # 不排序的话顺序取决于字典，列表会每次都跳。
+        items.sort(key=lambda r: (not (r["state"] == "waiting" and r["players"] < r["max"]),
+                                  -r["players"], r["port"]))
+        for item in items:
+            item["joinable"] = item["state"] == "waiting" and item["players"] < item["max"]
+        return {"rooms": items}
+
+
+def make_handler(directory: Directory):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "MoltenfrostDirectory/1"
+
+        # 默认的实现会把每个请求打到 stderr，而 systemd 下那就是 journal。
+        # 只留一行自己控制的、可读的日志。
+        def log_message(self, fmt, *args):
+            if directory.verbose:
+                sys.stderr.write("[http] %s - %s\n" % (self.address_string(), fmt % args))
+
+        def _send(self, code: int, payload: dict) -> None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _read_json(self) -> dict:
+            length = clamp_int(self.headers.get("Content-Length"), 0, 1 << 20, 0)
+            if length == 0:
+                return {}
+            raw = self.rfile.read(length)
+            try:
+                body = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return {}
+            return body if isinstance(body, dict) else {}
+
+        def do_GET(self):
+            route = urlparse(self.path).path
+            if route == "/rooms":
+                self._send(200, directory.listing())
+            elif route == "/health":
+                self._send(200, {"ok": True})
+            else:
+                self._send(404, {"ok": False, "error": "unknown path"})
+
+        def do_POST(self):
+            route = urlparse(self.path).path
+            if route != "/rooms":
+                self._send(404, {"ok": False, "error": "unknown path"})
+                return
+            result = directory.register(self._read_json(), self.client_address[0])
+            self._send(200 if result.get("ok") else 400, result)
+
+        def do_DELETE(self):
+            route = urlparse(self.path)
+            if route.path != "/rooms":
+                self._send(404, {"ok": False, "error": "unknown path"})
+                return
+            params = parse_qs(route.query)
+            port = clamp_int((params.get("port") or ["0"])[0], 0, 65535, 0)
+            self._send(200, directory.unregister(port))
+
+    return Handler
+
+
+def run_selftest() -> int:
+    """不启服务、只验判断逻辑。**把安全那一条变成可断言的检查**，
+    而不是靠 curl 目测——目测那次就验错了对象（拿内网地址当公网地址试）。
+
+    跑：python3 room-directory.py --selftest
+    它是纯函数与内存对象，不碰网络与磁盘。
+    """
+    failures = []
+    checks = [0]
+
+    def ok(condition, message):
+        checks[0] += 1
+        if not condition:
+            failures.append(message)
+
+    # --- 名字的清洗 ---
+    ok(clean_name("  名字  ") == "名字", "首尾空白应当去掉，得到 %r" % clean_name("  名字  "))
+    ok(clean_name("a\x00b\x1bc") == "abc", "控制字符应当去掉，得到 %r" % clean_name("a\x00b\x1bc"))
+    ok(len(clean_name("长" * 100)) == NAME_MAX_CHARS, "超长应当截到 %d 个字符" % NAME_MAX_CHARS)
+    ok(clean_name(None) == "" and clean_name(123) == "", "非字符串应当当成空")
+    ok(clean_name("熔霜") == "熔霜", "中文应当原样保留")
+
+    # --- 数值的限幅 ---
+    ok(clamp_int("7", 0, 10, -1) == 7, "数字字符串应当被接受")
+    ok(clamp_int("abc", 0, 10, -1) == -1, "非数字应当回退")
+    ok(clamp_int(99, 0, 10, -1) == 10, "超上限应当夹住")
+    ok(clamp_int(-5, 0, 10, -1) == 0, "超下限应当夹住")
+
+    # --- 来源的判定 ---
+    for addr in ("127.0.0.1", "10.1.2.3", "192.168.5.9", "172.16.0.17", "172.31.255.1", "::1"):
+        ok(is_local_source(addr), "%s 应当算内网" % addr)
+    for addr in ("203.0.113.5", "8.8.8.8", "172.32.0.1", "172.15.0.1", "1.2.3.4"):
+        ok(not is_local_source(addr), "%s 应当算公网" % addr)
+
+    # --- 安全：公网来源不得谎报 host（本次自检的主要存在理由）---
+    directory = Directory(ttl=6.0, max_rooms=8, verbose=False)
+    spoof = {"name": "谎报房", "host": "1.2.3.4", "port": 40005,
+             "players": 1, "max": 2, "state": "waiting"}
+    result = directory.register(dict(spoof), "203.0.113.5")
+    ok(result.get("host") == "203.0.113.5", "公网来源的 host 应当被改写成来源地址，得到 %r" % result.get("host"))
+    listed = {r["port"]: r for r in directory.listing()["rooms"]}
+    ok(listed[40005]["host"] == "203.0.113.5", "列表里也应当是来源地址")
+
+    # --- 同机（环回）则采信它报的 host ---
+    local = directory.register(dict(spoof, port=40006, host="moltenfrost-server.mytemos.com"), "127.0.0.1")
+    ok(local.get("host") == "moltenfrost-server.mytemos.com",
+       "环回来源应当采信 --advertise 给的地址，得到 %r" % local.get("host"))
+
+    # --- 缺端口与超上限 ---
+    ok(not directory.register({"name": "x"}, "127.0.0.1").get("ok"), "缺 port 应当被拒")
+    small = Directory(ttl=6.0, max_rooms=1, verbose=False)
+    ok(small.register({"port": 1}, "127.0.0.1").get("ok"), "第一间应当登记成功")
+    ok(not small.register({"port": 2}, "127.0.0.1").get("ok"), "超过上限应当被拒")
+    ok(small.register({"port": 1}, "127.0.0.1").get("ok"), "已存在的房间刷新不应被上限拦住")
+
+    # --- 注销与可进性 ---
+    ok(directory.unregister(40005).get("ok"), "注销应当成功")
+    ok(all(r["port"] != 40005 for r in directory.listing()["rooms"]), "注销之后不应还在列表里")
+    full = directory.register({"port": 40007, "players": 2, "max": 2}, "127.0.0.1")
+    ok(full.get("ok"), "满员房也应当能登记（列表要显示它，只是不可进）")
+    rooms = {r["port"]: r for r in directory.listing()["rooms"]}
+    ok(not rooms[40007]["joinable"], "满员房不应当标为可进")
+    playing = directory.register({"port": 40008, "players": 1, "max": 2, "state": "playing"}, "127.0.0.1")
+    ok(playing.get("ok"), "进行中的房也应当能登记")
+    rooms = {r["port"]: r for r in directory.listing()["rooms"]}
+    ok(not rooms[40008]["joinable"], "进行中的房不应当标为可进（否则陌生人会顶掉原来的人）")
+
+    if failures:
+        print("房间目录自检失败：")
+        for line in failures:
+            print("  -- %s" % line)
+        return 1
+    print("房间目录自检通过（%d 项断言）。" % checks[0])
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=27017, help="监听端口（TCP）")
+    parser.add_argument("--bind", default="0.0.0.0")
+    parser.add_argument("--ttl", type=float, default=6.0,
+                        help="多久没刷新就从列表里移除（秒）。房间按它的三分之一刷新")
+    parser.add_argument("--max-rooms", type=int, default=64)
+    parser.add_argument("--verbose", action="store_true", help="把每次登记/过期都打出来")
+    parser.add_argument("--selftest", action="store_true", help="只跑判断逻辑的自检，不启服务")
+    args = parser.parse_args()
+
+    if args.selftest:
+        return run_selftest()
+
+    directory = Directory(args.ttl, args.max_rooms, args.verbose)
+    server = ThreadingHTTPServer((args.bind, args.port), make_handler(directory))
+    print("[dir] listening %d (ttl %.0fs, max %d rooms)" % (args.port, args.ttl, args.max_rooms),
+          flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

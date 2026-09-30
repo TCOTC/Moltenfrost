@@ -429,9 +429,10 @@ async function main() {
   // 四个 bug（房主在客户端点了没反应、服务端从不下发名单、客户端自己造名单、
   // RPC 路径不一致导致静默失败），每一个在日志上都表现为"什么也没发生"。
   //
-  // 用本机房间 + 两个驱动器，不需要网关，因此任何平台都能跑。
-  // 网关那一层（逐流 NAT、房间拆分、best-fit 选房）要有 gcc 与 Linux，
-  // 仍由 tools/gateway-public-check.sh 在服务器上手工验，见 docs/公网房间方案.md。
+  // 用本机房间 + 两个驱动器，不需要目录，因此任何平台都能跑。
+  // 目录那一层（登记的实时取值、满房判定、名字的 UTF-8 往返、房间回到 waiting）
+  // 由 tools/directory-check.sh 在服务器上手工验（要有 Linux 与 ssh），
+  // 跨平台的部分则由 python3 tools/room-directory.py --selftest 覆盖，见 docs/公网房间方案.md 7.0。
   await (async () => {
     const lobbyPort = opts.port + 5;
     const lobbyServer = launch(

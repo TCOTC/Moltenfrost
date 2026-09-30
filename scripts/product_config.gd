@@ -22,7 +22,10 @@ const PATH := "res://config/product.cfg"
 ## 兜底值。与 config/product.cfg 中的取值保持一致；
 ## 不一致时以配置文件为准。改这里只是为了"文件丢了也能用"。
 const DEFAULT_OFFICIAL_HOST := "moltenfrost-server.mytemos.com"
-const DEFAULT_OFFICIAL_PORT := 27015
+## 官方房间目录的端口（HTTP，TCP）。
+## 路线 A 之后不再有"那一个官方房间"：房间是目录里的一列，各自带自己的 host:port，
+## 因此这里只需要目录的端口（见 docs/公网房间方案.md）。
+const DEFAULT_OFFICIAL_DIRECTORY_PORT := 27017
 
 ## 端口的合法范围。取值不合法时回退到兜底值，并且报告出来——
 ## 静默修正比报错更难查：表面上"配置生效了"，实际用的是另一个值。
@@ -30,7 +33,7 @@ const MIN_PORT := 1
 const MAX_PORT := 65535
 
 static var _official_host := DEFAULT_OFFICIAL_HOST
-static var _official_port := DEFAULT_OFFICIAL_PORT
+static var _official_directory_port := DEFAULT_OFFICIAL_DIRECTORY_PORT
 ## 生效值是否来自配置文件。只用于日志与提示文案。
 static var _loaded_from_file := false
 ## 已经读过一次就不再读。重复读没有意义，而且会让日志重复。
@@ -44,7 +47,7 @@ static func load_from_disk() -> bool:
 	_done = true
 	# 先回到兜底值再尝试覆盖，这样重复调用不会把上一次的取值留在内存里。
 	_official_host = DEFAULT_OFFICIAL_HOST
-	_official_port = DEFAULT_OFFICIAL_PORT
+	_official_directory_port = DEFAULT_OFFICIAL_DIRECTORY_PORT
 	_loaded_from_file = false
 
 	var config := ConfigFile.new()
@@ -55,7 +58,7 @@ static func load_from_disk() -> bool:
 
 	_loaded_from_file = true
 	_official_host = _read_host(config)
-	_official_port = _read_port(config)
+	_official_directory_port = _read_port(config)
 	return true
 
 
@@ -64,9 +67,14 @@ static func official_host() -> String:
 	return _official_host
 
 
-static func official_port() -> int:
+static func official_directory_port() -> int:
 	_ensure_loaded()
-	return _official_port
+	return _official_directory_port
+
+
+## 目录的基址，形如 "http://host:port"。拼法只有这一份。
+static func official_directory_url() -> String:
+	return DirectoryClient.base_url(official_host(), official_directory_port())
 
 
 ## 生效值来自配置文件还是兜底值。给调用方决定提示文案用，
@@ -82,7 +90,7 @@ static func describe() -> String:
 	_ensure_loaded()
 	return "%s:%d（%s）" % [
 		_official_host,
-		_official_port,
+		_official_directory_port,
 		"来自 %s" % PATH if _loaded_from_file else "来自代码里的兜底值",
 	]
 
@@ -107,8 +115,8 @@ static func _read_host(config: ConfigFile) -> String:
 ## 读端口并校验范围。取值来自文本文件，可能写成任何东西，
 ## 因此这里既查类型也查范围，越界就报告并回退。
 static func _read_port(config: ConfigFile) -> int:
-	var raw = config.get_value("network", "official_port", DEFAULT_OFFICIAL_PORT)
-	# ConfigFile 会把纯数字读成 int，但写成 "27015" 这样的带引号形式就是 String。
+	var raw = config.get_value("network", "official_directory_port", DEFAULT_OFFICIAL_DIRECTORY_PORT)
+	# ConfigFile 会把纯数字读成 int，但写成 "27017" 这样的带引号形式就是 String。
 	# 两种都接受，其余一律回退。
 	var port := 0
 	if raw is int:
@@ -116,11 +124,13 @@ static func _read_port(config: ConfigFile) -> int:
 	elif raw is String and (raw as String).is_valid_int():
 		port = int(raw)
 	else:
-		push_error("%s 的 network/official_port 不是整数（%s），改用兜底值 %d" % [PATH, raw, DEFAULT_OFFICIAL_PORT])
-		return DEFAULT_OFFICIAL_PORT
-	if port < MIN_PORT or port > MAX_PORT:
-		push_error("%s 的 network/official_port=%d 超出 %d～%d，改用兜底值 %d" % [
-			PATH, port, MIN_PORT, MAX_PORT, DEFAULT_OFFICIAL_PORT,
+		push_error("%s 的 network/official_directory_port 不是整数（%s），改用兜底值 %d" % [
+			PATH, raw, DEFAULT_OFFICIAL_DIRECTORY_PORT,
 		])
-		return DEFAULT_OFFICIAL_PORT
+		return DEFAULT_OFFICIAL_DIRECTORY_PORT
+	if port < MIN_PORT or port > MAX_PORT:
+		push_error("%s 的 network/official_directory_port=%d 超出 %d～%d，改用兜底值 %d" % [
+			PATH, port, MIN_PORT, MAX_PORT, DEFAULT_OFFICIAL_DIRECTORY_PORT,
+		])
+		return DEFAULT_OFFICIAL_DIRECTORY_PORT
 	return port

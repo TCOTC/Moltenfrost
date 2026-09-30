@@ -69,7 +69,7 @@ func _case_file_schema() -> void:
 		return
 	_ok(config.has_section("network"), "配置应当有 [network] 段")
 	_ok(config.has_section_key("network", "official_host"), "配置应当有 network/official_host 键（键名拼错会被静默忽略）")
-	_ok(config.has_section_key("network", "official_port"), "配置应当有 network/official_port 键（键名拼错会被静默忽略）")
+	_ok(config.has_section_key("network", "official_directory_port"), "配置应当有 network/official_directory_port 键（键名拼错会被静默忽略）")
 
 	var host := String(config.get_value("network", "official_host", ""))
 	_ok(not host.is_empty(), "配置里的 official_host 不应为空")
@@ -94,38 +94,38 @@ func _case_host_validation() -> void:
 func _case_port_validation() -> void:
 	# 合法取值：写入时是 int
 	var ok_int := ConfigFile.new()
-	ok_int.set_value("network", "official_port", 27015)
-	_ok(Config._read_port(ok_int) == 27015, "整数端口应当被接受")
+	ok_int.set_value("network", "official_directory_port", 27017)
+	_ok(Config._read_port(ok_int) == 27017, "整数端口应当被接受")
 
 	# 合法取值：写成带引号的字符串（人手编辑时很容易这样写）
 	var ok_str := ConfigFile.new()
-	ok_str.set_value("network", "official_port", "27015")
-	_ok(Config._read_port(ok_str) == 27015, "写成字符串的整数端口也应当被接受")
+	ok_str.set_value("network", "official_directory_port", "27017")
+	_ok(Config._read_port(ok_str) == 27017, "写成字符串的整数端口也应当被接受")
 
 	# 非法取值：**每个分支取一个代表就够，不按值穷举**。
 	# 理由是穷举只会重复触发同一条分支，而每次都会 push_error 打一段堆栈，
 	# 把测试输出淹掉——那种噪声会让人开始忽略错误行，代价比覆盖面更大。
 	# 下面两个各对应一条分支：类型不对、以及数值越界。
 	var bad_type := ConfigFile.new()
-	bad_type.set_value("network", "official_port", "abc")
-	_ok(Config._read_port(bad_type) == Config.DEFAULT_OFFICIAL_PORT,
-		"端口不是整数时应当回退到兜底值 %d，实际 %d" % [Config.DEFAULT_OFFICIAL_PORT, Config._read_port(bad_type)])
+	bad_type.set_value("network", "official_directory_port", "abc")
+	_ok(Config._read_port(bad_type) == Config.DEFAULT_OFFICIAL_DIRECTORY_PORT,
+		"端口不是整数时应当回退到兜底值 %d，实际 %d" % [Config.DEFAULT_OFFICIAL_DIRECTORY_PORT, Config._read_port(bad_type)])
 
 	var bad_range := ConfigFile.new()
-	bad_range.set_value("network", "official_port", 70000)
-	_ok(Config._read_port(bad_range) == Config.DEFAULT_OFFICIAL_PORT,
-		"端口越界时应当回退到兜底值 %d，实际 %d" % [Config.DEFAULT_OFFICIAL_PORT, Config._read_port(bad_range)])
+	bad_range.set_value("network", "official_directory_port", 70000)
+	_ok(Config._read_port(bad_range) == Config.DEFAULT_OFFICIAL_DIRECTORY_PORT,
+		"端口越界时应当回退到兜底值 %d，实际 %d" % [Config.DEFAULT_OFFICIAL_DIRECTORY_PORT, Config._read_port(bad_range)])
 
 	# 键不存在时也应当回退（配置文件是旧版本、或那一行被删掉）。
 	var missing := ConfigFile.new()
 	missing.set_value("network", "other_key", 1234)
-	_ok(Config._read_port(missing) == Config.DEFAULT_OFFICIAL_PORT,
+	_ok(Config._read_port(missing) == Config.DEFAULT_OFFICIAL_DIRECTORY_PORT,
 		"端口键不存在时应当回退到兜底值")
 
-	# 加载器的兜底值必须与界面会用到的那个默认端口一致，
-	# 否则"配置文件缺失"时就与"配置文件存在"表现出不同行为，而那是无意的差异。
-	_ok(Config.DEFAULT_OFFICIAL_PORT == Net.DEFAULT_PORT,
-		"兜底端口应当等于 Net.DEFAULT_PORT（%d），实际 %d" % [Net.DEFAULT_PORT, Config.DEFAULT_OFFICIAL_PORT])
+	# 目录的端口**不应等于**游戏端口。它以前就是游戏端口（那时官方是一个固定房间），
+	# 路线 A 之后它是一个 HTTP 目录的端口，两者相同反而说明配置没跟着改。
+	_ok(Config.DEFAULT_OFFICIAL_DIRECTORY_PORT != Net.DEFAULT_PORT,
+		"目录端口不应当等于游戏端口（%d），否则说明配置还停在旧结构上" % Net.DEFAULT_PORT)
 
 
 # ---------------------------------------------------------------- 收尾

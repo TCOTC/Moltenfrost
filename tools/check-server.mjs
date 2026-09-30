@@ -43,10 +43,12 @@ const HELP = `熔霜 · 联机服务器验收检查
   --advertise <地址>   客户端要连的地址（域名）。不给则用 --host
   --user <用户名>      SSH 用户，默认 ubuntu
   --key <私钥路径>     SSH 私钥，默认 ~/.ssh/id_ed25519_moltenfrost
-  --port <端口>        对外入口端口，默认 27015
+  --port <端口>        单房间模式下的游戏端口，默认 27015
+  --directory-port <端口>  目录模式下的目录端口（TCP），默认 27017
+  --room-port <端口>   目录模式下客户端要连的那一间的端口，默认 40001
   --service <名字>     systemd 单元前缀，默认 moltenfrost
-  --rooms <N>          网关模式下有几个房间，默认 2（只在网关模式下用到）
-  --room-base-port <端口>  网关模式下房间端口的起点，默认 40001
+  --rooms <N>          目录模式下有几间房，默认 2
+  --room-base-port <端口>  目录模式下房间端口的起点，默认 40001
   --godot <路径>       Godot 可执行文件，默认自动探测
   --verbose            把客户端与 SSH 的输出实时打出
   -h, --help           显示本帮助
@@ -59,6 +61,8 @@ function parseArgs(argv) {
     user: process.env.MOLTENFROST_SSH_USER || "ubuntu",
     key: process.env.MOLTENFROST_SSH_KEY || path.join(os.homedir(), ".ssh", "id_ed25519_moltenfrost"),
     port: 27015,
+    directoryPort: 27017,
+    roomPort: 40001,
     service: "moltenfrost",
     rooms: 2,
     roomBasePort: 40001,
@@ -79,6 +83,8 @@ function parseArgs(argv) {
       case "--user": opts.user = next(); break;
       case "--key": opts.key = next(); break;
       case "--port": opts.port = Number(next()); break;
+      case "--directory-port": opts.directoryPort = Number(next()); break;
+      case "--room-port": opts.roomPort = Number(next()); break;
       case "--service": opts.service = next(); break;
       case "--rooms": opts.rooms = Number(next()); break;
       case "--room-base-port": opts.roomBasePort = Number(next()); break;
@@ -198,29 +204,33 @@ async function main() {
   const ssh = makeSsh(opts);
   const assertions = [];
   const say = (msg) => process.stdout.write(`${msg}\n`);
-  // 两种拓扑下同一个端口号归属不同：
-  //   单房间模式 —— `moltenfrost@27015` 就是那个游戏房间；
-  //   **网关模式** —— 27015 归 `moltenfrost-gateway`，房间在环回 40001 起。
-  // 不区分会真的把环境弄坏：早先本工具硬编码 `moltenfrost@<端口>`，于是它在网关
-  // 模式下"发现服务没跑"就启动了 `moltenfrost@27015`——那个残留房间会去抢
-  // 127.0.0.1:27015，把本机验证脚本的环回连接引到它身上。
-  //（实测踩到：网关与房间全在跑，却多出一个 27015 房间；已把它 disable 掉。）
-  const gatewayUnit = `${opts.service}-gateway`;
-  const gatewayMode = ssh(`systemctl cat ${gatewayUnit} >/dev/null 2>&1 && echo yes || echo no`) === "yes";
+  // 两种拓扑下"玩家连的是谁"根本不同：
+  //   单房间模式 —— 连 `moltenfrost@<端口>` 那个房间；
+  //   **目录模式（路线 A）** —— 向 `moltenfrost-directory` 拿列表，然后**直连某一间房**。
+  // 不区分会真的把环境弄坏：早先本工具硬编码 `moltenfrost@<端口>`，于是它在另一个
+  // 拓扑下"发现服务没跑"就把它启动了，而那个多出来的进程会去抢同一个端口
+  //（实测踩到：网关与房间全在跑，却多出一个 27015 房间）。
+  const directoryUnit = `${opts.service}-directory`;
+  const directoryMode =
+    ssh(`systemctl cat ${directoryUnit} >/dev/null 2>&1 && echo yes || echo no`) === "yes";
   const roomPorts = Array.from({ length: opts.rooms }, (_, i) => opts.roomBasePort + i);
   const roomUnits = roomPorts.map((p) => `${opts.service}@${p}`);
   const entryUnit = `${opts.service}@${opts.port}`;
-  // 代码一致性要检查**所有在跑的进程**：网关与每个房间都是各自的进程，
+  // 代码一致性要检查**所有在跑的进程**：目录与每间房都是各自的进程，
   // 只查其中一个的话"另一个跑着旧代码"查不出来。
-  const codeUnits = gatewayMode ? [gatewayUnit, ...roomUnits] : [entryUnit];
-  // 正常停止要停的是**持有这个客户端的那一个**：网关模式下停网关只会静默丢包
-  // （客户端只能等心跳超时），而停房间才会让 ENet 把断开通知发给网关、再转给客户端。
-  // 只有一个客户端时网关会把它分到第 0 间房（见 net-gateway.c 的 pick_room）。
-  const stopUnit = gatewayMode ? roomUnits[0] : entryUnit;
+  const codeUnits = directoryMode ? [directoryUnit, ...roomUnits] : [entryUnit];
+  // 客户端要连的端口：目录模式下是**那一间房自己的端口**（客户端直连房间）。
+  const gamePort = directoryMode ? opts.roomPort : opts.port;
+  // 正常停止要停的是**这一客户端所连的那一个**：目录模式下客户端直连房间，
+  // 于是停那间房会把 ENet 的断开通知直接发给客户端（与单房间模式同一条路径）。
+  // **停目录不行**：那不会断开任何已建立的连接，客户端只能等心跳超时。
+  const stopUnit = directoryMode ? `${opts.service}@${opts.roomPort}` : entryUnit;
 
-  say(`服务器：${opts.host}    客户端连接目标：${target}:${opts.port}`);
+  say(`服务器：${opts.host}    客户端连接目标：${target}:${gamePort}`);
   say(`Godot：${godot}`);
-  say(`拓扑：${gatewayMode ? `网关（${gatewayUnit}） + ${roomUnits.length} 个房间` : `单房间（${entryUnit}）`}\n`);
+  say(`拓扑：${directoryMode
+    ? `房间目录（${directoryUnit}）+ ${roomUnits.length} 间房（客户端直连）`
+    : `单房间（${entryUnit}）`}\n`);
 
   // 1. SSH
   ssh("true");
@@ -228,7 +238,7 @@ async function main() {
 
   // 2. 服务在跑。若不在跑就启动，并等它在监听。
   //    "在跑"与"在监听"是两件事：Godot 启动要几秒，只看 systemctl 会误判。
-  const wantUnits = gatewayMode ? [gatewayUnit, ...roomUnits] : [entryUnit];
+  const wantUnits = directoryMode ? [directoryUnit, ...roomUnits] : [entryUnit];
   for (const wanted of wantUnits) {
     const unitState = ssh(`systemctl is-active ${wanted} || true`);
     if (unitState !== "active") {
@@ -260,23 +270,41 @@ async function main() {
       );
     }
   }
-  assertions.push(gatewayMode ? `网关与 ${roomUnits.length} 个房间跑的代码都与仓库一致` : "服务运行的代码与仓库一致");
+  assertions.push(directoryMode ? `目录与 ${roomUnits.length} 间房跑的代码都与仓库一致` : "服务运行的代码与仓库一致");
 
   let listening = false;
   for (let i = 0; i < 30; i++) {
     // ss 在最小安装里可能没有，因此退回用 /proc/net/udp 判断。
-    const out = ssh(`sudo ss -lun 2>/dev/null | grep -c ':${opts.port}\\b' || grep -ci ':${opts.port.toString(16).toUpperCase()}' /proc/net/udp || true`);
-    if (Number(out) > 0) { listening = true; break; }
+    // 目录模式下要查**两个**：目录（TCP）与那一间房（UDP）。
+    // 少查一个的现象是"检查全过，但客户端连不上"——因为目录在、房间不在。
+    //
+    // 匹配串里**不要用 \b**：它要穿过 PowerShell 与 ssh 两层引号，实测到那边已经
+    // 不是单词边界了，于是明明在监听却数到 0（而 `grep -c 40001` 能正常命中）。
+    // 端口号最多 5 位、且这一列后面跟的是空格，因此直接匹配就够，不会误命中。
+    const countUdp = (port) => `sudo ss -lun 2>/dev/null | grep -c ':${port}' || true`;
+    const countTcp = (port) => `sudo ss -ltn 2>/dev/null | grep -c ':${port}' || true`;
+    const probes = [countUdp(gamePort)];
+    if (directoryMode) probes.push(countTcp(opts.directoryPort));
+    const out = ssh(probes.join(" ; "));
+    const counts = out.split(/\s+/).filter((x) => x.length > 0).map(Number);
+    if (counts.length === probes.length && counts.every((c) => c > 0)) { listening = true; break; }
     await sleep(1000);
   }
-  if (!listening) throw new Error(`服务在跑，但没有看到监听 UDP ${opts.port}`);
-  assertions.push(`服务在运行并监听 UDP ${opts.port}`);
+  if (!listening) {
+    throw new Error(directoryMode
+      ? `没看到监听：房间 UDP ${gamePort} 或目录 TCP ${opts.directoryPort}`
+      : `服务在跑，但没有看到监听 UDP ${gamePort}`);
+  }
+  assertions.push(directoryMode
+    ? `目录监听 TCP ${opts.directoryPort}、房间监听 UDP ${gamePort}`
+    : `服务在运行并监听 UDP ${gamePort}`);
 
   // 3~5. 起一个客户端，做完检查后收回。
   const state = { text: "", exited: false, exitCode: null };
   const child = spawn(
     godot,
-    ["--headless", "--path", PROJECT_DIR, "--", "--join", target, "--port", String(opts.port), "--net-stats"],
+    ["--headless", "--path", PROJECT_DIR, "--", "--join", target, "--port", String(gamePort),
+      ...(directoryMode ? ["--public-room"] : []), "--net-stats"],
     { cwd: PROJECT_DIR, stdio: ["ignore", "pipe", "pipe"] },
   );
   const collect = (stream) => {
@@ -301,7 +329,7 @@ async function main() {
         if (state.text.includes("已连接到主机")) return Date.now() - startedAt;
         await sleep(200);
       }
-      throw new Error(`客户端在 20 秒内没有连上 ${target}:${opts.port}\n${state.text.split("\n").slice(-15).join("\n")}`);
+      throw new Error(`客户端在 20 秒内没有连上 ${target}:${gamePort}\n${state.text.split("\n").slice(-15).join("\n")}`);
     })();
     assertions.push(`客户端经 ${target} 连上服务器（${(connectMs / 1000).toFixed(1)} 秒）`);
 
@@ -376,13 +404,8 @@ async function main() {
     }
     // 恢复成运行状态，免得检查完之后没人能连。
     say("\n（恢复服务运行状态）");
-    // 网关模式下恢复的是**刚被停掉的那个房间**，而不是 27015：
-    // 27015 归网关，去 start 一个 `moltenfrost@27015` 只会在环回上多出一个野房间。
-    if (gatewayMode) {
-      ssh(`sudo systemctl start ${stopUnit}`);
-    } else {
-      ssh(`sudo systemctl start ${entryUnit}`);
-    }
+    // 恢复的是**刚被停掉的那一个**：目录模式下是那一间房，而不是某个入口端口。
+    ssh(`sudo systemctl start ${stopUnit}`);
   }
 
   say("");

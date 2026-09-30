@@ -21,6 +21,8 @@ extends CanvasLayer
 
 signal start_requested()
 signal leave_requested()
+## 房主改了房间名。由入口脚本落地（它才知道服务端要广播、目录要刷新）。
+signal rename_requested(new_name: String)
 
 ## 房间的公开类型。界面与入口脚本共用这一份定义，避免各自写一个字符串字面量
 ##（那种做法的问题是改一处忘一处，而两处不一致时界面会显示成另一个类型）。
@@ -33,6 +35,11 @@ enum Kind {
 ## 一个人进去只有一个角色，而这一关的许多机关要求两个角色同时在场。
 const MIN_PLAYERS := 2
 
+## 房间名的最长字符数。**必须与 tools/room-directory.py 的 NAME_MAX_CHARS 一致**：
+## 这里限了而服务端不限，玩家能看到一个被截短的名字；反过来则会被服务端悄悄截断。
+## 两处各写一份是刻意的（一个在 GDScript、一个在 Python，没法共用常量）。
+const NAME_MAX_CHARS := 24
+
 @onready var _room_name: Label = $Root/Layout/Header/RoomName
 @onready var _kind: Label = $Root/Layout/Body/InfoPanel/InfoMargin/InfoBox/Kind
 @onready var _address: Label = $Root/Layout/Body/InfoPanel/InfoMargin/InfoBox/Address
@@ -41,6 +48,8 @@ const MIN_PLAYERS := 2
 @onready var _players: VBoxContainer = $Root/Layout/Body/PlayersPanel/PlayersMargin/PlayersBox/Players
 @onready var _start: Button = $Root/Layout/Footer/Buttons/Start
 @onready var _leave: Button = $Root/Layout/Footer/Buttons/Leave
+@onready var _rename: LineEdit = $Root/Layout/Body/InfoPanel/InfoMargin/InfoBox/RenameRow/Rename
+@onready var _rename_row: VBoxContainer = $Root/Layout/Body/InfoPanel/InfoMargin/InfoBox/RenameRow
 @onready var _status: Label = $Root/Layout/Footer/Status
 
 ## 本机是不是房主。**从名单里推出来**，而不是自己去问「本机是不是服务端」。
@@ -67,6 +76,11 @@ func _ready() -> void:
 	GameTheme.apply_primary(_start)
 	_start.pressed.connect(_on_start_pressed)
 	_leave.pressed.connect(func() -> void: leave_requested.emit())
+	# 回车/失焦提交。用 text_submitted 而不是 text_changed：后者每敲一个字就广播一次，
+	# 而房间名是要报给目录的（一次改名就是一次网络请求 + 一次列表变动）。
+	_rename.text_submitted.connect(func(_text: String) -> void: _emit_rename())
+	_rename.focus_exited.connect(_emit_rename)
+	_rename.max_length = NAME_MAX_CHARS
 	# 开局之前这一格是空的，先给一句说明占位，避免面板在名单到达之前看起来是坏的。
 	_notice = "正在等待房间信息…"
 	_set_status(_notice)
@@ -97,7 +111,12 @@ func close() -> void:
 ## 形状：{name: String, kind: int, address: String, host_id: int, players: Array[Dictionary]}
 ## 每个玩家项：{id: int, slot: int, element: int, host: bool, you: bool}
 func apply(info: Dictionary) -> void:
-	_room_name.text = String(info.get("name", "未命名房间"))
+	var name := String(info.get("name", "未命名房间"))
+	_room_name.text = name
+	# 列表刷新会每秒重进这里，而**正在输入的人不能被改写**：
+	# 否则敲到一半就会被打断（光标也会跳）。只在没有焦点时同步。
+	if not _rename.has_focus():
+		_rename.text = name
 	_kind.text = "类型 · %s" % kind_name(int(info.get("kind", Kind.LAN)))
 	var address := String(info.get("address", ""))
 	# 空地址时给一个短横而不是空字符串：空着会看起来像"还没加载完"，
@@ -182,6 +201,9 @@ func _refresh() -> void:
 		_start.disabled = not enough
 		_start.text = "开始游戏" if enough else "开始游戏（还差 %d 人）" % (MIN_PLAYERS - _player_count)
 	_start_hint.text = _hint_text(enough, _is_host)
+	# 只有房主能改名，而房间名是公开展示的（目录里所有人看得到）。
+	# 非房主看到的是一个填不了、点了也没用的格子，不如直接不显示。
+	_rename_row.visible = _is_host
 	_set_status(_notice if not _notice.is_empty() else _summary(_is_host))
 
 
@@ -211,6 +233,20 @@ func _on_start_pressed() -> void:
 		_set_status("至少要 %d 个人才能开始。" % MIN_PLAYERS)
 		return
 	start_requested.emit()
+
+
+## 提交改名。空名字不提交（一个空的房间名在列表里看起来像坏了），
+## 而超长已经由 LineEdit 的 max_length 挡住了。
+func _emit_rename() -> void:
+	var text := _rename.text.strip_edges()
+	if text.is_empty():
+		_rename.text = _room_name.text
+		return
+	if text == _room_name.text:
+		return
+	# 先就地显示，别等一次网络往返——名字是本地就在手边的信息。
+	_room_name.text = text
+	rename_requested.emit(text)
 
 
 func _set_status(text: String) -> void:

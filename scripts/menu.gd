@@ -64,6 +64,20 @@ var _inputs: Array[Control] = []
 ## 列表空着时显示在那块区域里的说明。它不是一个新控件类型，
 ## 而是把一句提示叠在列表上方——ItemList 自己没有“占位文案”这个能力。
 var _empty_hint: Label = null
+## 最近一次探测到的局域网房间，与最近一次从目录拉到的公网房间。
+## 两份分开存：它们各自刷新（局域网靠广播、公网靠 HTTP），
+## 合成只在 _rebuild_list() 里做一次。
+var _lan_rooms: Array = []
+var _official_rooms: Array = []
+## 目录列表是否拉到了，以及拉不到的原因（直接显示给玩家）。
+var _directory_ok := false
+var _directory_error := "还没拉过"
+var _directory_client: DirectoryClient = null
+## 目录列表的刷新计时。
+var _directory_elapsed := 0.0
+## 目录列表的刷新间隔（秒）。比房间的登记间隔慢：列表不需要那么灵敏，
+## 而它每次都是一次 HTTP 往返。
+const DIRECTORY_REFRESH := 3.0
 
 
 func _ready() -> void:
@@ -91,6 +105,12 @@ func _ready() -> void:
 	_discovery = LanDiscovery.new()
 	_discovery.rooms_changed.connect(_on_rooms_changed)
 	add_child(_discovery)
+	# 目录客户端也是界面自己的：列表是界面的事，关掉界面就不该再发请求。
+	_directory_client = DirectoryClient.new()
+	_directory_client.rooms_fetched.connect(_on_directory_rooms)
+	_directory_client.request_failed.connect(_on_directory_failed)
+	add_child(_directory_client)
+	set_process(true)
 	_refresh.pressed.connect(_on_refresh_pressed)
 	_join.pressed.connect(_on_join_pressed)
 	_host.pressed.connect(_on_host_pressed)
@@ -114,6 +134,26 @@ func open(default_port: int) -> void:
 	visible = true
 	_clear_busy()
 	_start_probing()
+	# 立刻拉一次，然后按间隔刷新。不拉的话第一次进界面会看到一份空列表，
+	# 而玩家无从得知"是还没有房间"还是"还在等"。
+	_directory_elapsed = DIRECTORY_REFRESH
+	_fetch_directory()
+
+
+func _process(delta: float) -> void:
+	# 隐藏时不发请求：界面关掉之后玩家在跑关卡，没必要再拉列表。
+	if not visible:
+		return
+	_directory_elapsed += delta
+	if _directory_elapsed < DIRECTORY_REFRESH:
+		return
+	_directory_elapsed = 0.0
+	_fetch_directory()
+
+
+func _fetch_directory() -> void:
+	# 地址取自 config/product.cfg（换机器/换域名只改那一个文件）。
+	_directory_client.fetch_rooms(ProductConfig.official_directory_url())
 
 
 ## 关闭界面并停止探测。房间的广播不在这里处理：那是创建房间那一方的责任，
@@ -140,22 +180,25 @@ func _clear_busy() -> void:
 
 func _on_refresh_pressed() -> void:
 	_start_probing()
+	# 「重新探测」把两份列表都重拉一遍：玩家点它的意思就是"现在到底有什么"，
+	# 只刷新局域网会让官方那一半看起来卡住了。
+	_directory_elapsed = DIRECTORY_REFRESH
+	_fetch_public_rooms_now()
 
 
-## 创建房间。局域网在本机开服务端；公网是连到官方网关、由它分配一个房间
-## （见 scripts/main.gd 的 _create_public_room）。两者都只发信号，怎么启动由入口脚本决定。
+## 创建房间。两条路不同，而且**不同之处是本质的**：
+##   局域网 —— 真的在本机开一个服务端（房间是这一把创建的）
+##   公网 —— 官方服务器上那几间房是**预先存在**的，因此"创建"就是**进一间空的并当房主**
+##（见 docs/公网房间方案.md 的路线 A）。两者都只发信号，怎么建会话由入口脚本决定。
 func _on_host_pressed() -> void:
+	if _room_kind == Lobby.Kind.PUBLIC:
+		_create_public_room()
+		return
 	var room_name := _room_name.text.strip_edges()
 	if room_name.is_empty():
 		room_name = LanDiscovery.default_room_name()
 	# 写回界面，让玩家看到实际生效的房间名。
 	_room_name.text = room_name
-	if _room_kind == Lobby.Kind.PUBLIC:
-		# 这一条不校验端口：公网房间开在官方服务器上，本机这个端口根本用不上，
-		# 而因为它填错就不让创建会让人莫名其妙。
-		_set_busy("正在向官方服务器申请房间…")
-		host_requested.emit(room_name, 0, _room_kind)
-		return
 	var port := _parse_port()
 	if port <= 0:
 		return
@@ -163,14 +206,49 @@ func _on_host_pressed() -> void:
 	host_requested.emit(room_name, port, _room_kind)
 
 
+## 「创建公网房间」= 找一间空房进去当房主。
+##
+## 不校验本机端口：公网房间跑在官方服务器上，本机那个端口用不上。
+## 也不要求先拉过一次目录——没有列表时先拉一次并告诉玩家稍等。
+func _create_public_room() -> void:
+	var free_room := {}
+	for room in _official_rooms:
+		if _joinable(room) and int(room.get("players", 0)) == 0:
+			free_room = room
+			break
+	if free_room.is_empty():
+		# 官方房间都有人，或者列表还没拉到。两种情况都不该默默失败。
+		_directory_elapsed = DIRECTORY_REFRESH
+		_fetch_public_rooms_now()
+		_set_status("现在没有空着的官方房间（每个房间只坐 %d 人）。列表里有人的房间还在等队友，也可以自己开一间局域网房间。" % Lobby.MIN_PLAYERS)
+		return
+	_begin_join(String(free_room["address"]), int(free_room["port"]), Lobby.Kind.PUBLIC)
+
+
+## 手动拉一次列表。与定期的那个共用一次请求，只是不等计时器。
+func _fetch_public_rooms_now() -> void:
+	_fetch_directory()
+
+
 ## 加入列表里选中的那个房间。
 func _on_join_pressed() -> void:
 	if _selected.is_empty():
 		_set_status("请先在上面的列表里选中一个房间。")
 		return
+	var kind := Lobby.Kind.PUBLIC if bool(_selected.get("official", false)) else Lobby.Kind.LAN
 	var address := String(_selected.get("address", ""))
 	var port := int(_selected.get("port", 0))
-	_begin_join(address, port)
+	_begin_join(address, port, kind)
+
+
+## 不能进的房间要点得动的话，点了之后只会白等一次连接超时。
+## 因此直接置灰，并把原因写在状态栏。
+func _joinable(room: Dictionary) -> bool:
+	if not bool(room.get("official", false)):
+		return true
+	if String(room.get("state", "waiting")) != "waiting":
+		return false
+	return int(room.get("players", 0)) < int(room.get("max", 2))
 
 
 func _on_direct_pressed() -> void:
@@ -181,13 +259,16 @@ func _on_direct_pressed() -> void:
 	var port := _parse_port()
 	if port <= 0:
 		return
-	_begin_join(address, port)
+	# 手填地址的一律按局域网算：那条路径上的超时就是地址/防火墙问题，
+	# 按公网提示会把玩家引到"房间都满了"上去。
+	_begin_join(address, port, Lobby.Kind.LAN)
 
 
 ## 切换公开类型。只改状态与那行说明，不发信号——发信号是点「创建房间」时的事。
 func _set_room_kind(kind: int) -> void:
 	_room_kind = kind
-	# 公网房间的名字由官方服务端给（它不知道本机填了什么），因此这一格在公网下锁上。
+	# 公网下锁上房间名那一格：公网房间是官方服务器上已经存在的一间，
+	# 它的名字由**房主在大厅里改**（路线 A），不是在创建时填的。
 	# 留着一个填了但不生效的输入框是最差的一种：玩家会以为房间名是他定的。
 	# `not _busy` 那一半是必要的：创建进行中时所有输入都被锁着，
 	# 而这里若只按类型判断，会把那一格在这一刻意外解锁。
@@ -195,28 +276,50 @@ func _set_room_kind(kind: int) -> void:
 	_refresh_kind_hint()
 
 
-## 类型说明。两个选项各有一句“选了会怎么样”，而不是只给一个名字：
-## “公网/局域网”对不熟悉网络的人来说不是自明的，尤其是跨网时能不能加入这件事。
-## 公网那句还要说清一个容易被误解的点：那个按钮不是在“本机开服”，
-## 玩家拿到的是官方服务器上的一间房。
+## 类型说明。两个选项各有一句"选了会怎么样"，而不是只给一个名字：
+## "公网/局域网"对不熟悉网络的人来说不是自明的，尤其是跨网时能不能加入这件事。
+## 公网那句要说清一个容易被误解的点：这个按钮**不是在"本机开服"**，
+## 而是从官方列表里挑一间空房进去当房主。
 func _refresh_kind_hint() -> void:
 	if _room_kind == Lobby.Kind.PUBLIC:
-		_kind_hint.text = "公网 · 房间开在官方服务器上，跨网也能加入。你会进入一间空房并成为房主，别人选「官方房间」时会与你分到同一间（房间名由服务器给，因此上面那一格已锁上）。"
+		_kind_hint.text = "公网 · 房间开在官方服务器上，跨网也能加入。点创建会进一间空房并由你当房主，进去之后可以改房间名；别人也能在左侧列表里选中它加入。"
 	else:
 		_kind_hint.text = "局域网 · 房间开在本机，同一局域网里的人在左侧列表里就能看到它。"
 
 
-func _begin_join(address: String, port: int) -> void:
+func _begin_join(address: String, port: int, kind: int) -> void:
 	_set_busy("正在连接 %s:%d…" % [address, port])
-	join_requested.emit(address, port)
+	join_requested.emit(address, port, kind)
 
 
 # ---------------------------------------------------------------- 列表
 
+## 局域网探测结果变了。只是换一份数据，真正的合成在 _rebuild_list() 里。
 func _on_rooms_changed(listed: Array) -> void:
-	var merged := _merge_rooms(listed)
-	# 重建列表时必须把选中项还原：列表每秒可能刷新一次，
-	# 每次都清空选择的话，玩家刚点中的房间会在下一帧自己取消。
+	_lan_rooms = listed
+	_rebuild_list()
+
+
+## 目录返回了列表。
+func _on_directory_rooms(listed: Array) -> void:
+	_official_rooms.clear()
+	for item in listed:
+		if item is Dictionary:
+			_official_rooms.append(_listed_to_room(item))
+	_directory_ok = true
+	_rebuild_list()
+
+
+func _on_directory_failed(reason: String) -> void:
+	_directory_ok = false
+	_directory_error = reason
+	_rebuild_list()
+
+
+## 重建整张列表。局域网每秒刷新一次，因此这个方法会被频繁调用，
+## 选中的那一项必须还原（否则玩家刚点中的房间会在下一帧自己取消）。
+func _rebuild_list() -> void:
+	var merged := _merge_rooms(_lan_rooms, _official_rooms)
 	var keep := String(_selected.get("key", ""))
 	_rooms.clear()
 	_selected = {}
@@ -230,27 +333,39 @@ func _on_rooms_changed(listed: Array) -> void:
 		# 这一行会触发 item_selected，_selected 在那里被写入。
 		_rooms.select(reselect)
 	_update_join_enabled()
-	_empty_hint.visible = _lan_count() == 0
+	_empty_hint.visible = _room_count() == 0
 	if _busy:
 		# 连接进行中：状态栏留给"正在连接…"，不被列表刷新覆盖。
 		return
-	var found := listed.size()
-	if found == 0:
-		_set_status("局域网里没有探测到房间，但官方房间随时可加入（选中它再点加入）。也可以自己创建一个房间。")
-	else:
-		_set_status("局域网中发现 %d 个房间，加上官方房间共 %d 个（每秒刷新，%d 秒没有广播的会被移除）。" % [
-			found, merged.size(), int(_discovery.room_ttl),
-		])
+	_set_status(_list_summary())
 
 
-## 固定条目与探测到的房间合成一份列表：固定条目在前，探测到的在后。
-## 同地址同端口的探测结果会被去掉，否则同一台服务器会在列表里出现两次——
-## 调试时把 config/product.cfg 里的地址临时改成本机地址就会遇到那种情况。
-func _merge_rooms(discovered: Array) -> Array:
-	var merged: Array = _builtin_rooms()
+## 状态栏那一句。把三件事一起说清：列表里有什么、多久刷新、拉不到时为什么。
+func _list_summary() -> String:
+	var lan := _lan_rooms.size()
+	var official := _official_rooms.size()
+	if not _directory_ok:
+		return "官方房间列表拉不到（%s）。局域网里有 %d 个房间；也可以在右边自建一间。" % [_directory_error, lan]
+	if lan == 0 and official == 0:
+		return "暂时没有可选的房间。可以在右边自建一间局域网房间，或稍后再看。"
+	return "官方 %d 间、局域网 %d 间（每几秒刷新；局域网里 %d 秒没有广播的会被移除）。" % [
+		official, lan, int(_discovery.room_ttl),
+	]
+
+
+## 把目录里的公网房间与探测到的局域网房间合成一份列表。
+##
+## 为什么不再有那个「官方房间（公网）」固定条目：路线 A 之后官方那边是**一列房间**
+##（见 docs/公网房间方案.md），而固定条目会把"选一间"这件事退化成"只能连那一间"。
+##
+## 去重按 host:port：同一间房可能既在目录里、又收到了它的局域网广播
+##（开发时把 local 房间也配了目录就会这样），留目录那一份——它带人数与状态。
+func _merge_rooms(discovered: Array, listed: Array) -> Array:
+	var merged: Array = []
 	var taken: Dictionary = {}
-	for room in merged:
+	for room in listed:
 		taken[_address_key(room)] = true
+		merged.append(room)
 	for room in discovered:
 		var key := _address_key(room)
 		if taken.has(key):
@@ -260,36 +375,37 @@ func _merge_rooms(discovered: Array) -> Array:
 	return merged
 
 
-## 固定条目。形状与探测到的房间一致，因此列表重建、选中、加入都不用分两条路径。
-## 地址与端口取自 config/product.cfg；那里读不到时会回退到代码里的兜底值。
-func _builtin_rooms() -> Array:
-	var host := ProductConfig.official_host()
-	var port := ProductConfig.official_port()
-	return [{
-		"key": "official:%s:%d" % [host, port],
-		"name": OFFICIAL_NAME,
-		"address": host,
-		"port": port,
+## 把目录返回的一项转成列表条目。**在这里统一形状**，于是下面的选中、
+## 加入、显示都不必分"公网"与"局域网"两条路径。
+func _listed_to_room(item: Dictionary) -> Dictionary:
+	return {
+		"key": "official:%s:%d" % [String(item.get("host", "")), int(item.get("port", 0))],
+		"name": String(item.get("name", "未命名房间")),
+		"address": String(item.get("host", "")),
+		"port": int(item.get("port", 0)),
+		"players": int(item.get("players", 1)),
+		"max": int(item.get("max", 2)),
+		"state": String(item.get("state", "waiting")),
 		"official": true,
-	}]
+	}
 
 
-## 去重用的键。固定条目用域名，探测到的用 IP，两者不会撞；
-## 真正会撞的情形是固定条目被临时指向一个局域网地址。
+## 去重用的键。公网房间用域名、探测到的用 IP，两者不会撞；
+## 真正会撞的情形是把公网房间也配上了局域网广播。
 func _address_key(room: Dictionary) -> String:
 	return "%s:%d" % [String(room.get("address", "")), int(room.get("port", 0))]
 
 
 func _room_label(room: Dictionary) -> String:
-	# 官方房间的人数无从得知（没有连上去就不存在这份信息），所以不显示人数而显示"公网"。
-	# 给它编个数字反而会让人以为那是真的。
 	if bool(room.get("official", false)):
-		return "%s    %s:%d    公网" % [
-			String(room.get("name", "官方房间")),
-			String(room.get("address", "?")),
-			int(room.get("port", 0)),
+		var max_players := int(room.get("max", 2))
+		var state := "进行中" if String(room.get("state", "waiting")) == "playing" else "等待中"
+		# 人数与状态都对玩家有用：“2/2 等待中”与“1/2 等待中”是不同的选择。
+		return "%s    %d/%d 人    %s    %s" % [
+			String(room.get("name", "房间")), int(room.get("players", 0)), max_players,
+			state, String(room.get("address", "?")),
 		]
-	return "%s    %s:%d    %d 人" % [
+	return "%s    %s:%d    %d 人    局域网" % [
 		String(room.get("name", "房间")),
 		String(room.get("address", "?")),
 		int(room.get("port", 0)),
@@ -300,12 +416,16 @@ func _room_label(room: Dictionary) -> String:
 func _on_room_selected(index: int) -> void:
 	var room = _rooms.get_item_metadata(index)
 	_selected = room if room is Dictionary else {}
+	if not _selected.is_empty() and not _joinable(_selected):
+		# 说清楚为什么点不动，而不是只把按钮置灰。
+		_set_status("「%s」现在进不了：%s。" % [
+			String(_selected.get("name", "这间房")),
+			"已经在打了" if String(_selected.get("state", "")) == "playing" else "人已经满了",
+		])
 	_update_join_enabled()
 
 
-## 列表空着时的那句说明。它叠在列表上方（ItemList 没有占位文案这个能力），
-## 只在一间局域网房间都没探测到时显示——那时列表里只剩官方房间那一行，
-## 下面是一大片黑，看起来像功能坏了。
+## 列表空着时的那句说明。它叠在列表上方（ItemList 没有占位文案这个能力）。
 func _build_empty_hint() -> void:
 	_empty_hint = Label.new()
 	_empty_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -314,20 +434,15 @@ func _build_empty_hint() -> void:
 	_empty_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_empty_hint.add_theme_color_override("font_color", GameTheme.TEXT_DIM)
 	_empty_hint.add_theme_font_size_override("font_size", GameTheme.FONT_LABEL)
-	_empty_hint.text = "还没探测到局域网房间。\n在右边「开一局」自己创建一个，或者选中列表里的官方房间加入。"
+	_empty_hint.text = "还没有可选的房间。\n在右边「开一局」自己创建一个局域网房间，或者稍后再看（官方房间列表每隔几秒刷新）。"
 	_rooms.add_child(_empty_hint)
 	_empty_hint.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_empty_hint.visible = false
 
 
-## 探测到的房间数量（不含固定条目）。
-func _lan_count() -> int:
-	var count := 0
-	for index in _rooms.item_count:
-		var meta = _rooms.get_item_metadata(index)
-		if meta is Dictionary and not bool((meta as Dictionary).get("official", false)):
-			count += 1
-	return count
+## 可选的房间数（公网与局域网都算）。用于决定要不要显示那句空状态说明。
+func _room_count() -> int:
+	return _rooms.item_count
 
 
 func _on_room_activated(index: int) -> void:
@@ -379,9 +494,9 @@ func _set_inputs_enabled(enabled: bool) -> void:
 		_update_join_enabled()
 
 
-## 没有选中房间时不能加入。
+## 没有选中房间、或选中的房间进不了时，不能加入。
 func _update_join_enabled() -> void:
-	_join.disabled = _busy or _selected.is_empty()
+	_join.disabled = _busy or _selected.is_empty() or not _joinable(_selected)
 
 
 func _set_status(text: String) -> void:

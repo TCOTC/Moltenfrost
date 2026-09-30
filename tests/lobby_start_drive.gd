@@ -30,9 +30,17 @@ var _finished := false
 var _requested := false
 var _diag_left := 0.0
 var _frames := 0
+## 房主要改成的房间名（`--rename=名字`）。空表示不改。
+## 它让验证脚本能走完"房主改名 → 目录里那一项跟着变"这条链——
+## 房间名是 UTF-8、跨 HTTP 与 JSON 传两跳，光看代码看不出它有没有被截断。
+var _rename_to := ""
+var _renamed := false
 
 
 func _ready() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--rename="):
+			_rename_to = arg.substr("--rename=".length())
 	_main = MAIN_SCENE.instantiate()
 	# **必须挂到 /root 下、并延用 "Main" 这个名字。**
 	# 入口脚本上的 @rpc 走的是固定路径 /root/Main（与 Game 的 /root/Main/Game 同理），
@@ -85,6 +93,17 @@ func _process(delta: float) -> void:
 			count, is_host, bool(_main.call("is_local_host")), started,
 		])
 	if is_host and not _requested and count >= 2:
+		# 先改名再开局：改名会广播给客户端并刷新目录登记，因此验证脚本能在
+		# 客户端那侧与目录那一侧同时看到它。走的是与真人相同的路径
+		#（填进输入框 → 提交 → 大厅发信号 → 入口脚本落地）。
+		if not _renamed and not _rename_to.is_empty():
+			_renamed = true
+			print("[drive] 房主改名「%s」" % _rename_to)
+			var rename_field: Node = lobby.get_node_or_null(
+				"Root/Layout/Body/InfoPanel/InfoMargin/InfoBox/RenameRow/Rename")
+			if rename_field is LineEdit:
+				(rename_field as LineEdit).text = _rename_to
+				lobby.call("_emit_rename")
 		_requested = true
 		print("[drive] 房主：名单里有 %d 人，请求开局（真人点「开始游戏」走的就是这里）" % count)
 		_main.call("_on_lobby_start_requested")

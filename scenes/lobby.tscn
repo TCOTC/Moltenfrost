@@ -122,6 +122,19 @@ theme_override_font_sizes/font_size = 24
 text = "—"
 selectable = true
 
+[node name="RenameRow" type="VBoxContainer" parent="Root/Layout/Body/InfoPanel/InfoMargin/InfoBox"]
+theme_override_constants/separation = 4
+
+[node name="RenameLabel" type="Label" parent="Root/Layout/Body/InfoPanel/InfoMargin/InfoBox/RenameRow"]
+theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
+theme_override_font_sizes/font_size = 15
+text = "房间名（你是房主，可以改）"
+
+[node name="Rename" type="LineEdit" parent="Root/Layout/Body/InfoPanel/InfoMargin/InfoBox/RenameRow"]
+custom_minimum_size = Vector2(0, 46)
+max_length = 24
+placeholder_text = "房间名"
+
 [node name="Spacer" type="Control" parent="Root/Layout/Body/InfoPanel/InfoMargin/InfoBox"]
 size_flags_vertical = 3
 mouse_filter = 2

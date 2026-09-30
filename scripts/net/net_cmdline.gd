@@ -12,7 +12,11 @@ extends RefCounted
 ## 所以两种写法都扫一遍，后扫到的覆盖先扫到的。
 ##
 ## 与服务端分流相关的两个参数：
-##   --bind <地址>   服务端只在该地址上监听（公网房间传 127.0.0.1）
+##   --bind <地址>   服务端只在该地址上监听（局域网房间不传）
+##   --directory HOST:PORT  房间登记到哪个目录（房间目录见 tools/room-directory.py）。
+##                   传了它就表示这是**公网房间**：会登记自己、且不往局域网广播。
+##   --max-players N 本房间的容量（默认 2）。它会随登记一起报给目录，
+##                   因此列表里那一栏显示的"几个人"与房间自己的判断一致。
 ##   --lobby         停在大厅，等房主点开始（不带则连上即开局）。
 ##                   `--host` 与 `--join` 两个方向都适用。
 
@@ -65,12 +69,27 @@ static func parse(args: PackedStringArray) -> Dictionary:
 				# 不带这个开关的无头启动仍然是"连上即开局"——交付前自检依赖它。
 				opts["lobby"] = true
 			"--bind":
-				# 服务端的绑定地址。公网房间固定传 127.0.0.1，理由见 net.gd 的 host()。
+				# 服务端的绑定地址。公网房间不再绑环回（路线 A：客户端直连房间），
+				# 不传就是通配；这个开关留给"只想让某块网卡对外"的调试场景。
 				var bind_raw := _value_at(args, i + 1)
 				if bind_raw.is_empty():
 					push_error("--bind 后面需要接一个地址，例如 --bind 127.0.0.1")
 				else:
 					opts["bind"] = bind_raw
+					i += 1
+			"--directory":
+				var directory_raw := _value_at(args, i + 1)
+				if directory_raw.is_empty() or not directory_raw.contains(":"):
+					push_error("--directory 需要接 HOST:PORT，例如 --directory 127.0.0.1:27017")
+				else:
+					opts["directory"] = directory_raw
+					i += 1
+			"--max-players":
+				var max_raw := _value_at(args, i + 1)
+				if not max_raw.is_valid_int() or int(max_raw) < 1:
+					push_error("--max-players 需要接正整数，例如 --max-players 2，收到：%s" % max_raw)
+				else:
+					opts["max_players"] = int(max_raw)
 					i += 1
 			"--autopilot":
 				opts["autopilot"] = true
