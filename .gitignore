@@ -11,6 +11,11 @@ build/macos/*
 # tools/deploy-server.mjs 生成，不入库。
 build/server/
 
+# 单端口 UDP 网关的二进制品。源码是 tools/net-gateway.c，各机器自己编译：
+#   gcc -O2 -o build/net-gateway tools/net-gateway.c
+# 不入库的理由与其它产物一样：它是编译结果，不是源。
+build/net-gateway
+
 # 本机开发环境记录：每人的 Godot 装在哪、要不要额外扫描目录，各不相同。
 # 仓库里只留 memory/local-env.example.json 说明格式，实际取值只写在本机那一份。
 memory/local-env.json
