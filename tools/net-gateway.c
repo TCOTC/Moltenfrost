@@ -38,6 +38,11 @@
  *
  * 编译：gcc -O2 -o build/net-gateway tools/net-gateway.c
  * 验证：tools/net-gateway-game-check.sh（两个真实无头实例穿过网关）
+ *
+ * 日志：启动时一行 `[gateway] listening <端口>`；每个新客户端分到房时一行
+ * `[gateway] flow -> room N`；每 `--stats` 秒一行 `[gateway] flows=… rooms=…`。
+ * 分流那一行不是装饰：没有它时"某人被分到了哪间房"只能从房间侧的 peer 日志反推，
+ * 而排 1/2 与 2/2 的分流问题时就是这么瞎猜了一整轮。
  */
 
 #define _GNU_SOURCE
@@ -108,6 +113,16 @@ static int live_flows(void) {
 		if (g_flows[i].used)
 			count++;
 	return count;
+}
+
+/* 各房间人数，形如 "2/1/0"。统计行与分流诊断行共用，免得两处格式不一致。 */
+static const char *room_counts_text(void) {
+	static char text[256];
+	int at = 0;
+	text[0] = '\0';
+	for (int i = 0; i < g_room_total && at < (int)sizeof(text) - 8; i++)
+		at += snprintf(text + at, sizeof(text) - (size_t)at, "%s%d", i ? "/" : "", g_room_count[i]);
+	return text;
 }
 
 /* ---------------------------------------------------------------- 客户端地址哈希表
@@ -191,24 +206,10 @@ static void hash_erase(unsigned long long key) {
 
 /* ---------------------------------------------------------------- 流 */
 
-/* 每个房间最近一次**有包发出去**的时刻（单增秒）。只由返回方向更新：
- * 那个方向才是"房间还活着"的证据，因为请求方向的包是客户端发的，房间死了也一样会有。 */
+/* 每个房间最近一次**有包发出去**的时刻（单增秒）。只在返回方向更新。
+ * 目前只用于诊断输出（`rooms=1/2`），不参与选房——曾经用它做过被动探活，效果不好，
+ * 原因见 pick_room 的说明。 */
 static double g_room_last_out[MAX_ROOMS];
-
-/* 一个还有人却没往外发过包的房间，多久算坏。
- *
- * 为什么可以这么判：房间里只要有玩家，双方就在每秒交换心跳（Net 的 ping/pong，
- * 服务端会回 pong），所以一个**有流却没出包**的房间只可能是卡住了或挂了。
- * 阀值给得宽（5 秒 = 容忍连续几次心跳丢失），因为误判的代价是把人赶到别的房间，
- * 比多等一会儿更撚。 */
-#define ROOM_DEAD_SECONDS 5.0
-
-/* 房间能不能接新人。没人在就不可断言它坏了（空闲房间本就不发包），因此视为可用。 */
-static int room_alive(int room) {
-	if (g_room_count[room] == 0)
-		return 1;
-	return (now_seconds() - g_room_last_out[room]) <= ROOM_DEAD_SECONDS;
-}
 
 /* 选一个房间给新客户端。**挑「人最多且还有空位」的那一间，而不是「人最少」的。**
  *
@@ -219,18 +220,24 @@ static int room_alive(int room) {
  * 本作是双人协作，所以第二个玩家必须被放进同一个房间；房间满了才开下一间。
  * 平局取下标最小的那间（保持结果可预期，便于排查）。
  *
- * 返回 -1 表示所有房间都满了（或都不可用），调用方丢弃这个流。
+ * 返回 -1 表示所有房间都满了，调用方丢弃这个流（对应“房间满了稍后再试”）。
  *
- * **坏房间会被跳过**（见 room_alive）。不做这一步的后果不是报错，而是更坏：
- * 房间卡住时它的名额不会释放，后面来的人被派进去然后什么都不发生，
- * 表现与"服务器没反应"一模一样，而重启房间能好——排错时很难想到是选房的问题。 */
+ * ## 曾经在这里加过被动探活，已回退（2026-09-30）
+ *
+ * 试过“一个有人却不往外发包的房间算坏了，选房跳过它”（房间里有玩家时双方每秒交换心跳，
+ * 因此不出包 = 卡住）。想法听着成立，实测不成立：**房间刚重启、还没开始应答的几秒会被误判为坏，
+ * 而这个误判会粘住**——那个占着名额的旧流要等 60 秒空闲回收才消失，期间计数不归零，
+ * 于是健康房间一直被跳过。实测后果：三个客户端变成 1/2 分流（而 2/2 才是对的），
+ * 第三人还被塞进了一间当时真的没就绪的房间然后超时。
+ *
+ * 结论：这个启发式的代价（排除健康房间）大于它想避免的危害（派进卡住的房间）。
+ * 卡死的房间现在靠两件事兜：它自己的 `Restart=always`，以及客户端 10 秒的连接超时。
+ * 真要做得靠**主动探活**，而那要求房间能应答一个探针协议——超出当前范围。 */
 static int pick_room(void) {
 	int best = -1;
 	int best_count = -1;
 	for (int i = 0; i < g_room_total; i++) {
 		if (g_room_count[i] >= g_max_per_room)
-			continue;
-		if (!room_alive(i))
 			continue;
 		if (g_room_count[i] > best_count) {
 			best = i;
@@ -276,6 +283,14 @@ static int flow_open(const struct sockaddr_in *client) {
 	g_fd_flow[fd] = index;
 	g_room_count[room]++;
 	*hash_insert(key_of(client)) = index;
+
+	/* 把一个新客户端分到了哪间房写进日志。
+	 * 没有这一行时，"某人被分到了哪一间"只能从房间那侧的 peer 日志反推——
+	 * 排那个 1/2 与 2/2 分流问题时就是这么瞎猜了一整轮。 */
+	printf("[gateway] flow -> room %d (%s:%d)  rooms=%s\n",
+	       room, inet_ntoa(g_rooms[room].sin_addr), ntohs(g_rooms[room].sin_port),
+	       room_counts_text());
+	fflush(stdout);
 
 	/* 每个流只注册一次，因此放在这里，而不是每条包都 epoll_ctl。 */
 	struct epoll_event event;
@@ -429,16 +444,8 @@ static int drain_flow(int fd) {
 /* ---------------------------------------------------------------- 统计与回收 */
 
 static void stats_line(void) {
-	char rooms[256];
-	int at = snprintf(rooms, sizeof(rooms), "rooms=");
-	for (int i = 0; i < g_room_total && at < (int)sizeof(rooms) - 8; i++) {
-		/* 坏房间在上面标一个 !：选房会跳过它们，而"为什么这个房间不再收人"
-		 * 只能从这一行看出来（日志里没有别的痕迹）。 */
-		at += snprintf(rooms + at, sizeof(rooms) - (size_t)at, "%s%d%s",
-		               i ? "/" : "", g_room_count[i], room_alive(i) ? "" : "!");
-	}
-	printf("[gateway] flows=%d pkts_in=%ld pkts_out=%ld drops=%ld %s\n",
-	       live_flows(), g_pkts_in, g_pkts_out, g_drops, rooms);
+	printf("[gateway] flows=%d pkts_in=%ld pkts_out=%ld drops=%ld rooms=%s\n",
+	       live_flows(), g_pkts_in, g_pkts_out, g_drops, room_counts_text());
 	fflush(stdout);
 }
 
