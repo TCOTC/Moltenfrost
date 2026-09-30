@@ -308,7 +308,8 @@ async function main() {
   const roomUnits = poolMode ? [] : roomPorts.map((p) => `${opts.service}@${p}`);
   // 代码一致性要检查**所有在跑的进程**：目录与房间都是各自的进程，
   // 只查其中一个的话"另一个跑着旧代码"查不出来。池模式下要查目录与池；
-  // 房间是池的子进程，池重启时它们一定跟着换（那正是 K illMode=control-group 的作用）。
+  // 房间是池的子进程，池重启时它们一定跟着换（units 里的 KillMode=mixed 保证
+  // 剩下的最后会被 SIGKILL 收掉，池自己也有一道 reap_orphans）。
   const codeUnits = directoryMode ? [directoryUnit, ...(poolMode ? [poolUnit] : roomUnits)] : [entryUnit];
   // 客户端要连的端口。
   //   单房间模式 —— `--port`（默认 27015）。
@@ -473,40 +474,47 @@ async function main() {
     }
     assertions.push(`测得公网 RTT ${rttValue} ms`);
 
-    // 5. 正常停止。**判据是时间短于心跳阈值**，而不是具体文案。
-    // 客户端可能通过两条路径得知下线：ENet 的断开通知（服务端 close 时发出）
-    // 与客户端自己的心跳超时。实测证明有效的是前者——曾经额外加过一个 reliable 的
-    // "goodbye" RPC 来主动告知，但断开通知会先到，把客户端转成 OFFLINE，
-    // 随后的 goodbye 被去重逻辑忽略掉了（所以按文案断言会误判）。
-    // 反过来，若 close 之前漏了那次 poll()，断开通知会留在队列里随进程消失，
-    // 客户端就只有等心跳兜底——功能上照常"能用"，因此时间断言才查得出这种退化。
-    // 计时含 ssh 握手与 systemctl 执行的开销，因此只当作量级参考。
-    const seenBefore = (state.text.match(/与主机断开/g) || []).length;
+    // 5. 正常停止。**判据是"走的是哪条路"，不是耗时。**
+    // 客户端得知下线有两条路，而它们在 Net._finish_session 里各有自己的文案：
+    //   ENet 报的断开  → "与主机断开"
+    //   本机心跳超时    → "与主机失去联系（超过 5 秒没有回应）"
+    // 原先按"耗时短于心跳阈值"判，而那一秒表里含 ssh 握手 + systemctl 的开销，
+    // 于是同一份代码实测 4.9 秒通过、5.0 秒失败——**判据选错了，不是真的退化**。
+    // 文案是确定的，因此改成看文案；耗时仍然打出来（它确实是"通知 vs 兜底"的量级差别）。
+    //
+    // 为什么这条值得留：若 close 之前漏了那次 poll()，断开通知会留在队列里随进程消失，
+    // 而客户端要么等心跳、要么等 ICMP，功能上照常"能用"——只有这条断言查得出这种退化。
+    // 计时含 ssh 开销，因此只当作量级参考。
     const stopStartedAt = Date.now();
+    const seenBefore = (state.text.match(/与主机(断开|失去联系)/g) || []).length;
     ssh(`sudo systemctl stop ${stopUnit}`);
-    const detectedMs = await (async () => {
-      while (Date.now() - stopStartedAt < HEARTBEAT_TIMEOUT_MS + 8000) {
-        if ((state.text.match(/与主机断开/g) || []).length > seenBefore) {
-          return Date.now() - stopStartedAt;
-        }
-        await sleep(100);
+    let detectedMs = -1;
+    let detectedReason = "";
+    while (Date.now() - stopStartedAt < HEARTBEAT_TIMEOUT_MS + 8000) {
+      const seen = state.text.match(/与主机(断开|失去联系)/g) || [];
+      if (seen.length > seenBefore) {
+        detectedMs = Date.now() - stopStartedAt;
+        detectedReason = seen[seen.length - 1];
+        break;
       }
-      return -1;
-    })();
+      await sleep(100);
+    }
 
     if (detectedMs < 0) {
       throw new Error("服务端已停止，但客户端一直没报告断开");
     }
-    if (detectedMs >= HEARTBEAT_TIMEOUT_MS) {
-      const tail = state.text.split("\n").filter((l) => l.includes("断开")).slice(-3).join("\n");
+    if (detectedReason !== "与主机断开") {
+      const tail = state.text.split("\n").filter((l) => l.includes("断开") || l.includes("失去联系")).slice(-3).join("\n");
       // 这一条现在**必然失败**，而且原因已经查清（2026-09-30）：`systemctl stop` 发的 SIGTERM
       // 不会让 Godot 走 `_exit_tree`，进程几十毫秒就没了，`shutdown_gracefully()` 里那六轮
       // poll 从未跑到，于是断开通知从未发出，客户端只能等心跳。
-      // 保留为硬断言而不是降级成警告：它是真的没做到，而且判据（是否短于心跳阈值）能区分
+      // 保留为硬断言而不是降级成警告：它是真的没做到，而判据（走的是哪条路）能区分
       // "通知真的发出去了"与"心跳在兜底"。修好之后这条会自己变绿。
       throw new Error(
-        `客户端用了 ${(detectedMs / 1000).toFixed(1)} 秒才发现服务端停止，达到心跳阈值（${HEARTBEAT_TIMEOUT_MS / 1000} 秒）。\n` +
-        `说明是心跳在兜底。**已知原因**（2026-09-30 实测）：\n` +
+        `客户端是等心跳才发现的（${(detectedMs / 1000).toFixed(1)} 秒后报「${detectedReason}」，` +
+        `上限 ${HEARTBEAT_TIMEOUT_MS / 1000} 秒）。\n` +
+        `期望的是「与主机断开」——那条是 ENet 的断开通知（或 ICMP），完全不等心跳。\n` +
+        `**已知原因**（2026-09-30 实测）：\n` +
         `  systemctl stop 发的 SIGTERM 不会让 Godot 走 _exit_tree —— 进程 8～24 毫秒就退出了，\n` +
         `  而 Net.shutdown_gracefully() 里那六轮 poll 本身要 240 毫秒；时间对不上就说明它没跑到。\n` +
         `  用 --quit-after 让服务端自行退出时这条断言是 0.0 秒（见 tools/net-smoke.mjs），\n` +

@@ -200,8 +200,8 @@ class Pool:
     def reap_orphans(self) -> None:
         """清掉上一次遗留的孤儿房间进程。
 
-        为什么需要它：systemd 的默认 KillMode=control-group 会在池停时连子进程
-        一起清掉，但那是**通过了 systemd** 的那一条路。池被人 `kill -9`、
+        为什么需要它：systemd 会在主进程退出后把剩下的子进程清掉（见 units 里的
+        KillMode=mixed），但那是**通过了 systemd** 的那一条路。池被人 `kill -9`、
         或者整个机器的 cgroup 没管住时，房间会活下来并继续向目录登记——
         而新起的池认不出它们（不是自己的子进程，见 reconcile 里的提示），
         于是每间白占 120 MB、而且永远不跟随人数增减。

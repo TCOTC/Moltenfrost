@@ -334,12 +334,21 @@ RestartSec=2
 # 只置一个标记，真正的收尾（逐间请房间退出）在它自己的循环里做。
 KillSignal=SIGTERM
 TimeoutStopSec=40
-# **房间进程必须活在这个单元的 cgroup 里。** 它们是池的子进程，而默认的
-# KillMode=control-group 会在池停时**连同子进程一起**清掉——这一条不能改：
-# 否则一次 `systemctl restart moltenfrost-pool` 就会留下一批孤儿房间，
-# 每间白占 120 MB 且继续向目录登记（玩家看得到但没人在管）。
-# 这里显式写出来，免得以后有人为了"让子进程活着"而把它改掉。
-KillMode=control-group
+# **KillMode=mixed：SIGTERM 只发给主进程（池），剩下的在最后一步 SIGKILL。**
+#
+# 这一条曾经写成 control-group，理由是"池停时不能留下孤儿房间"。那个理由本身
+# 仍然成立（`systemctl restart` 之后不能有一批没人管、还在向目录登记的房间），
+# 但 control-group 是把 SIGTERM **同时发给 cgroup 里每一个进程** —— 房间也是
+# cgroup 成员，于是它们 8～24 毫秒就退出了，池那套"逐间请房间自己退出"的优雅
+# 路径（哨兵文件 + STOP_GRACE 8 秒）根本没机会跑。后果在客户端看得见：
+# 房间里的人拿不到断开通知，只能等 5 秒的心跳兜底才发现掉线
+#（tools/check-server.mjs 的第 5 条就是在盯这件事，实测它一直是红的）。
+#
+# mixed 同时满足两个要求：SIGTERM 只给主进程（池有机会先收房间），
+# 主进程退出后 systemd 会把剩下的**一律 SIGKILL**（因此不会留孤儿）；
+# 万一池卡住不退出，TimeoutStopSec 到点同样清干净。
+# 池自己也有一道保险：启动时 reap_orphans() 会按命令行标记清掉上一轮的孤儿。
+KillMode=mixed
 StandardOutput=journal
 StandardError=journal
 
