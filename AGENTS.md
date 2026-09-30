@@ -107,10 +107,17 @@ node tools/check-server.mjs --host <ssh别名> --advertise <域名>   # 公网�
    `| Select-String 'ok |FAIL|ALL PASS'`，它不受编码影响；要细看细节再写文件 + `-Encoding Unicode`。
 2. **不要直接用 PowerShell 跑 `godot`。** 输出会乱码。要跑就加进 `tools/dev-check.mjs`
    （它用 Node 收 stdout，因此永远是可读的），或者临时经 Node 包一层。
+   同理，**别用 `>` 把 `node` 的输出存成文件再读**：PowerShell 会按 GBK 解码子进程的 UTF-8，
+   存下去的就是坏内容，读不回来（实测为此白跑三轮）。要存就先
+   `[Console]::OutputEncoding=[Text.Encoding]::UTF8`，再 `| Out-File -Encoding utf8`，
+   读的时候用 Node 而不是 `Get-Content`；检索只用 ASCII 标记。
 3. **改动攒一批再跑，别改一行跑一次。** 快层 10 秒 / 全套 70 秒 / 服务器那条 8 秒，
    三档按上表用。解析错误这一类用 `--only syntax` 一秒就能定位，不要拿全套去撞。
 4. **部署认准 `--skip-godot`（7 秒）。** 只传一个 1.2 MB 的 bundle；不带它要 **~5 分钟**
    （75 MB 的 Godot 二进制要过一条对 GitHub 时通时断的线路）。服务器上的 `--import`
    只要 3 秒，所以别为了省它而加 `--skip-import`（那会让新 `class_name` 不生效）。
+5. **失败的检查要把"能区分原因"的行打出来，不要只打末尾几行。** 实测：驱动器把
+   「哪一条断言不成立」打在末尾 15 行之外，于是日志里只剩"有断言不成立"，为此多跑三轮
+   （每轮 48 秒）。诊断输出按"能区分哪一种原因"挑行，不按"离末尾近"挑行。
 
 细节（每次实测的记录）在 `memory/repo/` 与 `memory/` 里；本文件只留"不知道就会白干半天"的部分。

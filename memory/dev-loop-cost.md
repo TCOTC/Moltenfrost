@@ -65,6 +65,40 @@ PowerShell 5.1 的管道会把子进程的 UTF-8 输出重新编码，中文结�
 
 读结论用：`| Select-String 'ok |FAIL|ALL PASS'`。要细看再写文件 + `-Encoding Unicode`。
 
+### 把子进程输出重定向到文件时（2026-09-30 实测，踩了三轮）
+
+```
+node tools/net-smoke.mjs > $env:TEMP\sm.txt     # 这个文件**读不回来**
+```
+
+PowerShell 用控制台的 ANSI 代码页（这台机器是 GBK）去解码子进程的 UTF-8 字节，
+于是写进文件的是 `绗簩灞€` 这种**已经经过一次错解码**的内容 —— 再读回来无论用什么
+编码都还原不出原文（`-Encoding Unicode` 会显示成 GBK 解 UTF-8 的乱码，`utf8` 读则
+连 ASCII 都搜不到，因为文件是 UTF-16LE）。实测在"找那一行失败断言"上白跑了三轮。
+
+可用的写法（在同一个命令里先设好控制台编码，再让 PowerShell 写 UTF-8）：
+
+```powershell
+[Console]::OutputEncoding=[Text.Encoding]::UTF8
+node tools/net-smoke.mjs 2>&1 | Out-File -Encoding utf8 $env:TEMP\sm.txt
+node -e "console.log(require('fs').readFileSync(process.env.TEMP+'/sm.txt','utf8'))"   # 用 Node 读
+```
+
+`[Console]::OutputEncoding` 决定 PowerShell **如何解码**子进程的输出，`Out-File -Encoding utf8`
+决定它**怎么写**，两者都要设。读的时候用 Node（它自带 UTF-8），不要用 `Get-Content`。
+
+由此也有一条更省事的做法：**别把中文当检索关键词**。同一个文件上前一个工具命中、
+后一个不命中时，先怀疑编码，不要怀疑内容——搜 ASCII 标记（`[drive]`、`ok `、`FAIL`）永远成立。
+
+### 失败时不要把关键行截掉（一次性省下 144 秒）
+
+`net-smoke` 原先失败只打"末 15 行"，而驱动器把「哪一条断言不成立」打在更靠上的位置，
+于是最该看的那一行恰好被截掉，日志里只剩"有断言不成立"。为此多跑了三轮（每轮 48 秒）。
+现在改成末尾若干行 + **全部带标记的行**（`[drive]`/`[lobby]`/`[session]`/`[player]`…）。
+"驱动器读到 0 人"这个现象，`[drive]` 那几条看不出是名单没到、还是名单是空的，
+而 `[lobby] 名单：N 人` 那行直接给出答案——**所以诊断输出要按"能区分哪一种原因"来挑行**，
+而不是按"离末尾近"来挑。
+
 ## 不要直接用 PowerShell 跑 godot
 
 `& $godot --headless …` 的输出在终端里是乱码。要么加进 `dev-check.mjs`，
