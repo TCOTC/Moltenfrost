@@ -41,7 +41,8 @@ const WAIT_LIMIT := 5.0
 const STAGE_SETUP := 0
 const STAGE_WAIT_ROOM := 1
 const STAGE_ACTIONS := 2
-const STAGE_DIRECTORY := 3
+const STAGE_RECOVER := 3
+const STAGE_DIRECTORY := 4
 
 ## 目录客户端的替身。
 ##
@@ -86,6 +87,11 @@ func _process(delta: float) -> bool:
 				_next_stage(STAGE_ACTIONS)
 		STAGE_ACTIONS:
 			_case_actions()
+			_next_stage(STAGE_RECOVER)
+		STAGE_RECOVER:
+			# 上一阶段把认领留在了"等超时"的状态上，而看门狗是菜单自己的
+			# `_process` 里判的，所以要等一帧才能看到结果。
+			_case_recover()
 			_next_stage(STAGE_DIRECTORY)
 		STAGE_DIRECTORY:
 			_case_directory_down()
@@ -356,6 +362,44 @@ func _case_actions() -> void:
 		var call: Array = _join_calls[before]
 		_ok(String(call[0]) == "127.0.0.1", "手动加入的地址应当取自输入框，实际「%s」" % call[0])
 		_ok(int(call[1]) == MENU_PORT, "手动加入的端口应当取自输入框，实际 %d" % int(call[1]))
+
+	_ok(_menu.visible, "close() 之前界面应当是可见的（上面那些按钮才点得动）")
+
+	# **卡死总得有条出路。** 真机上出现过：点「创建房间」之后永久停在
+	# 「正在向官方服务器要一间房…」，输入全灰、没有报错、也退不出去——那时
+	# Esc 在界面里是被忽略的（入口脚本那一层见到界面可见就直接返回），
+	# 除关进程没有别的办法。这里只把"等超时"那个状态摆好，断言交给下一阶段
+	# （看门狗是菜单自己的 `_process` 里判的，因此要等一帧）。
+	# 界面故意不关：真卡住时它就是可见的，而隐藏之后菜单的 `_process` 会直接返回。
+	_menu.set_message("自检：解除忙碌")
+	_button("KindRow/Public").button_pressed = true
+	_button("HostRow/Host").pressed.emit()
+	_ok(_button("RoomButtons/Refresh").disabled,
+		"认领进行中时输入应当锁着（玩家在真机上看到的就是这个状态）")
+	# 把已经等过的时间直接推到超时线之后：看门狗按"累计等了多久"判，
+	# 因此不必真等 25 秒——那会让这个自检慢到没人愿意跑。
+	_menu.set("_claim_total", 9999.0)
+
+
+## 看门狗与 Esc 退路。与 STAGE_ACTIONS 合起来才是完整的一条：
+## 上一阶段把认领留在"已经等超时"的状态上，菜单的 `_process` 应当在这一帧之前
+## 就已经自己解除了锁。
+func _case_recover() -> void:
+	_ok(not _button("RoomButtons/Refresh").disabled,
+		"等超时之后应当自己解锁（否则玩家只能关进程）")
+	_ok(_status().text.contains("没成功"),
+		"超时时状态栏应当说明原因，实际「%s」" % _status().text)
+
+	# 再来一次，这次验 Esc。玩家分不清"还在等"与"已经坏了"，所以
+	# 任何时候按 Esc 都该能退出来——这是这类卡死的通用退路。
+	_button("HostRow/Host").pressed.emit()
+	_ok(_button("RoomButtons/Refresh").disabled, "重新开始认领后应当又锁上")
+	var cancel := InputEventAction.new()
+	cancel.action = "ui_cancel"
+	cancel.pressed = true
+	_menu.call("_unhandled_input", cancel)
+	_ok(not _button("RoomButtons/Refresh").disabled, "按 Esc 应当取消认领并解锁")
+	_ok(_status().text.contains("取消"), "取消后状态栏应当说明，实际「%s」" % _status().text)
 
 	_menu.close()
 	_ok(not _menu.visible, "close() 之后界面应当隐藏")

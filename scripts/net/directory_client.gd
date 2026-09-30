@@ -49,6 +49,14 @@ var _provider: Callable = Callable()
 ## 最近一次发出去的正文。只用于注销时取端口。
 var _last_body: Dictionary = {}
 var _enabled := false
+## 等着的认领请求（基址）。空表示没有。
+##
+## **认领不能被丢掉。** 以前它在 `_mode != ""` 时直接 return，而界面已经把
+## 自己锁成"正在向官方服务器要一间房…"——于是只要点「创建」的那一刻刚好有个
+## 列表请求在飞（界面每 3 秒拉一次，窗口不小），请求根本没发出去、界面也永远
+## 等不到回信，而屏幕上就停在那一句话上，没有任何报错。真机上就是这么卡的。
+## 现在把认领记下来，等在飞的那个一结束就发。
+var _pending_claim := ""
 
 
 func _ready() -> void:
@@ -77,11 +85,26 @@ func fetch_rooms(base: String) -> void:
 ## 必须由目录原子地完成，否则两个人同时点「创建」会拿到同一间。
 ## 见 tools/room-directory.py 的 claim()。
 ##
-## 返回是**异步**的，结果走 `claim_finished` 信号。上一个请求还在路上时这一次会被丢弃，
-## 调用方（界面）自己要重试——它本来就要处理"服务器正在补一间"那种重试。
+## 返回是**异步**的，结果走 `claim_finished` 信号。
+##
+## 上一个请求还在路上时**不会丢弃**：记下来，等它一结束就发（见 `_pending_claim`）。
+## 这一点是必需的——丢掉的代价是界面永久卡住，而不是"少一次列表刷新"。
 func claim_room(base: String) -> void:
 	if _mode != "":
+		_pending_claim = base
 		return
+	_mode = "claim"
+	_send(base.path_join("rooms/claim"), HTTPClient.METHOD_POST, {})
+
+
+## 把等着的那次认领发出去。用 `call_deferred` 调，因此它总在本次请求的
+## 信号发完之后才跑（否则调用方会先收到旧记号的结果、再看到新请求已上路，
+## 两边的状态会对不上）。
+func _send_pending_claim() -> void:
+	if _pending_claim.is_empty() or _mode != "":
+		return
+	var base := _pending_claim
+	_pending_claim = ""
 	_mode = "claim"
 	_send(base.path_join("rooms/claim"), HTTPClient.METHOD_POST, {})
 
@@ -200,17 +223,18 @@ func _on_completed(result: int, code: int, _headers: PackedStringArray, body: Pa
 func _finish(reason: String) -> void:
 	var mode := _mode
 	_mode = ""
-	if reason.is_empty():
-		return
-	# **用 print 而不是 push_warning。** 事后会把整段 GDScript 调用栈写进 journal，
-	# 而登记每 2 秒重试一次——目录重启的那几秒会给日志刷满没人看懂的堆栈，
-	# 把真正的报错淹掉。这里要的只是"知道了"，一行就够了。
-	print("[dir] %s（%s）" % [reason, mode])
-	# 登记失败不打扰玩家（见上），只有取列表与认领失败才是玩家能感知的。
-	if mode == "fetch":
-		request_failed.emit(reason)
-	elif mode == "claim":
-		claim_finished.emit({"ok": false, "reason": reason})
+	if not reason.is_empty():
+		# **用 print 而不是 push_warning。** 事后会把整段 GDScript 调用栈写进 journal，
+		# 而登记每 2 秒重试一次——目录重启的那几秒会给日志刷满没人看懂的堆栈，
+		# 把真正的报错淹掉。这里要的只是"知道了"，一行就够了。
+		print("[dir] %s（%s）" % [reason, mode])
+		# 登记失败不打扰玩家（见上），只有取列表与认领失败才是玩家能感知的。
+		if mode == "fetch":
+			request_failed.emit(reason)
+		elif mode == "claim":
+			claim_finished.emit({"ok": false, "reason": reason})
+	if not _pending_claim.is_empty():
+		call_deferred("_send_pending_claim")
 
 
 func _result_name(result: int) -> String:

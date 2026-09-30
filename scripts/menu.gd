@@ -36,6 +36,12 @@ const MAX_PORT := 65535
 ## 而实际上再等一下就好了。
 const CLAIM_RETRY_INTERVAL := 1.5
 const CLAIM_RETRY_LIMIT := 12
+## 整个认领过程的硬超时（秒）。从点「创建」算起，不区分内部重试了几轮。
+##
+## **必须有这一条。** 只要哪里出一个"没回信"的情形（网络、目录、或者像以前那样
+## 被静默丢弃），界面就会永久停在「正在向官方服务器要一间房…」上：输入全锁着、
+## 没有报错、也退不出去。真机上遇到过。有了它，最坏情况是等一会儿并看到一句原因。
+const CLAIM_TIMEOUT := 25.0
 
 var _discovery: LanDiscovery = null
 ## 正在连接或创建房间时禁用输入，避免连点。
@@ -85,6 +91,10 @@ const DIRECTORY_REFRESH := 3.0
 var _claim_retries := 0
 var _claim_waiting := false
 var _claim_elapsed := 0.0
+## 正在等认领（与 `_claim_waiting` 的区别：这个覆盖整个过程，包括在飞的那一次请求），
+## 以及从头到尾已经等了多久。见 CLAIM_TIMEOUT。
+var _claiming := false
+var _claim_total := 0.0
 
 
 func _ready() -> void:
@@ -152,12 +162,21 @@ func _process(delta: float) -> void:
 	# 隐藏时不发请求：界面关掉之后玩家在跑关卡，没必要再拉列表。
 	if not visible:
 		return
+	if _claiming:
+		_claim_total += delta
+		if _claim_total >= CLAIM_TIMEOUT:
+			_abandon_claim()
+			return
 	if _claim_waiting:
 		_claim_elapsed += delta
 		if _claim_elapsed >= CLAIM_RETRY_INTERVAL:
 			_claim_waiting = false
 			_request_public_room()
 			return
+	if _busy:
+		# **忙时不再刷列表。** 两个理由：一、玩家正在等结果，列表在脚下跳动只会干扰；
+		# 二、目录客户端只有一个 `HTTPRequest`，而认领要排到它后面去（见 _pending_claim）。
+		return
 	_directory_elapsed += delta
 	if _directory_elapsed < DIRECTORY_REFRESH:
 		return
@@ -177,6 +196,22 @@ func close() -> void:
 	_discovery.stop()
 
 
+## 界面上按 Esc：**在忙碌中就是取消**。
+##
+## 存在的理由是一个通用退路：玩家分不清"还在等"与"已经坏了"，而只要有任何一条
+## 路径忘了收尾（这个流程里就真发生过一次），界面就会永久锁着——输入全灰、没有报错、
+## 也退不出去（入口脚本那一层的 Esc 在界面可见时是直接返回的）。
+## 因此这里不是"某个 bug 的补丁"，而是"这类卡死总得有条出路"。
+## 不忙碌时什么都不做：界面上的返回没有意义，入口脚本会处理。
+func _unhandled_input(event: InputEvent) -> void:
+	if not visible or not _busy:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_clear_busy()
+		_set_status("已取消。可以重新选择，或自己开一间局域网房间。")
+		get_viewport().set_input_as_handled()
+
+
 ## 把界面恢复到可操作状态并显示一条说明。用于连接失败、从对局退回等场景。
 func set_message(text: String) -> void:
 	_clear_busy()
@@ -186,6 +221,7 @@ func set_message(text: String) -> void:
 ## 解除忙碌状态：输入可编辑、按钮可用、加入按钮按当前选中项决定。
 func _clear_busy() -> void:
 	_busy = false
+	_clear_claim_state()
 	_set_inputs_enabled(true)
 	_update_join_enabled()
 
@@ -230,13 +266,21 @@ func _on_host_pressed() -> void:
 func _create_public_room() -> void:
 	_claim_retries = CLAIM_RETRY_LIMIT
 	_claim_waiting = false
+	_claim_total = 0.0
 	_request_public_room()
 
 
 ## 发一次认领请求。失败与“稍等”都由 _on_claim_finished 处理。
 func _request_public_room() -> void:
+	_claiming = true
 	_set_busy("正在向官方服务器要一间房…")
 	_directory_client.claim_room(ProductConfig.official_directory_url())
+
+
+## 等了太久，放弃并给玩家一条出路（见 CLAIM_TIMEOUT）。
+func _abandon_claim() -> void:
+	_clear_busy()
+	_set_status("向官方服务器要房间没成功（等了 %.0f 秒）。可能是目录连不上，或那边开不出新房；稍后再试，或先开一间局域网房间。" % CLAIM_TIMEOUT)
 
 
 ## 认领的结果。三种情况，而且"稍等"那一种不是错误：
@@ -245,8 +289,7 @@ func _request_public_room() -> void:
 ##   其它     —— 真的失败了，把原因原样给玩家
 func _on_claim_finished(result: Dictionary) -> void:
 	if bool(result.get("ok", false)):
-		_claim_retries = 0
-		_claim_waiting = false
+		_clear_claim_state()
 		_begin_join(String(result.get("host", "")), int(result.get("port", 0)), Lobby.Kind.PUBLIC)
 		return
 	if bool(result.get("waiting", false)):
@@ -261,9 +304,15 @@ func _on_claim_finished(result: Dictionary) -> void:
 		_clear_busy()
 		_set_status("等了很久还是没有空房。官方那边的名额可能已经满了，稍后再试，或者先开一间局域网房间。")
 		return
-	_claim_waiting = false
 	_clear_busy()
 	_set_status("申请房间失败：%s" % String(result.get("reason", "未知原因")))
+
+
+## 清掉认领过程的状态。只处理标记，不改界面文案（各条收尾路径的文案不同）。
+func _clear_claim_state() -> void:
+	_claiming = false
+	_claim_waiting = false
+	_claim_total = 0.0
 
 
 ## 手动拉一次列表。与定期的那个共用一次请求，只是不等计时器。
