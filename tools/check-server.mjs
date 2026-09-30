@@ -23,6 +23,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { lookup } from "node:dns/promises";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -203,6 +204,25 @@ function makeSsh(opts) {
   };
 }
 
+// 把主机名解析成 IPv4。**与客户端做的是同一件事**（scripts/product_config.gd 的 Resolve）。
+//
+// 目录走 HTTP，而腾讯云会拦发往未备案域名的 HTTP 请求（302 到 DNSPod 的封禁页），
+// 换成 IP 才通。客户端因此在启动时解析、用 IP 连；这里必须照做，
+// 否则这个检查会在一个玩家不会遇到的情形上失败（用域名发 HTTP），白查一轮。
+// 配置里本来就是 IP 时直接返回。
+async function resolveDirectoryHost(host) {
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return { address: host, resolved: false };
+  try {
+    const { address } = await lookup(host, { family: 4 });
+    return { address, resolved: true };
+  } catch (err) {
+    process.stderr.write(
+      `解析 ${host} 失败（${err.message}），改用域名试试——若它被拦，这一步会失败。\n`,
+    );
+    return { address: host, resolved: false };
+  }
+}
+
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 // 向目录认领一间空房。**走公网 HTTP**（而不是 ssh 到服务器上 curl）：
@@ -261,7 +281,9 @@ async function main() {
   const target = opts.advertise || opts.host;
   // 目录的 HTTP 地址与房间的 UDP 地址**刻意不同**（见 --directory-host 的帮助）。
   opts.directoryPort = readProductConfig("official_directory_port", opts.directoryPort);
-  opts.directoryHost = opts.directoryHost || readProductConfig("official_host", target);
+  const configuredDirectoryHost = opts.directoryHost || readProductConfig("official_host", target);
+  const resolved = await resolveDirectoryHost(configuredDirectoryHost);
+  opts.directoryHost = resolved.address;
   const ssh = makeSsh(opts);
   const assertions = [];
   const say = (msg) => process.stdout.write(`${msg}\n`);
@@ -301,7 +323,9 @@ async function main() {
   let stopUnit = entryUnit;
 
   say(`服务器：${opts.host}    客户端连房间：${target}`);
-  say(`目录 HTTP：${opts.directoryHost}:${opts.directoryPort}（来自 config/product.cfg，与客户端同一个值）`);
+  say(resolved.resolved
+    ? `目录 HTTP：${configuredDirectoryHost} → ${opts.directoryHost}:${opts.directoryPort}（试与客户端同一件事：解析成 IP 再用，理由见 config/product.cfg）`
+    : `目录 HTTP：${opts.directoryHost}:${opts.directoryPort}（来自 config/product.cfg，与客户端同一个值）`);
   say(`Godot：${godot}`);
   say(`拓扑：${directoryMode
     ? (poolMode

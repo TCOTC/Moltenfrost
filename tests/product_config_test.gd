@@ -21,25 +21,30 @@ extends SceneTree
 
 const Config := preload("res://scripts/product_config.gd")
 
+## 解析那一步的等待上限（秒）。DNS 正常时是毫秒级，给宽一点只是防卡。
+const RESOLVE_WAIT_LIMIT := 10.0
+
 var _failures: PackedStringArray = PackedStringArray()
 var _checks: int = 0
-var _ran: bool = false
+var _stage := 0
+var _stage_elapsed := 0.0
 
 
-func _process(_delta: float) -> bool:
-	if _ran:
-		return true
-	_ran = true
-	_run_all()
-	if _failures.is_empty():
-		print("产品常量测试通过（%d 项断言）。" % _checks)
-		quit(0)
-	else:
-		print("产品常量测试失败：")
-		for line in _failures:
-			print("  -- %s" % line)
-		quit(1)
-	return true
+func _process(delta: float) -> bool:
+	_stage_elapsed += delta
+	match _stage:
+		0:
+			_run_all()
+			# 域名解析是**异步**的（见 product_config.gd 的 Resolve），因此要跨帧跑。
+			Config.begin_resolving_for("localhost")
+			_stage = 1
+			_stage_elapsed = 0.0
+		1:
+			if not Config.pump_resolving(delta) and _stage_elapsed < RESOLVE_WAIT_LIMIT:
+				return false
+			_case_resolution()
+			_finish()
+	return false
 
 
 func _run_all() -> void:
@@ -128,9 +133,48 @@ func _case_port_validation() -> void:
 		"目录端口不应当等于游戏端口（%d），否则说明配置还停在旧结构上" % Net.DEFAULT_PORT)
 
 
+# ---------------------------------------------------------------- 域名解析
+
+## 域名能解析成 IP，而且**用的是解析出来的那一个**。
+##
+## 为什么必须验这一层：客户端拉列表与创建房间走的都是 HTTP，而腾讯云会拦发往
+## 未备案域名的 HTTP（302 到 DNSPod 的封禁页，见 config/product.cfg）。
+## 修法是"配置里存域名，连接时用解析出的 IP"，而**这条链路一旦断掉，
+## 现象就是"列表永远拉不到"**，与"服务坏了"长得一模一样。
+##
+## 用 localhost 而不是真实域名：它由操作系统的 hosts 文件处理，
+## 因此这个自检不依赖外网，也不会因为 DNS 抽风而失败。
+func _case_resolution() -> void:
+	_ok(Config.resolve_state() == Config.Resolve.DONE,
+		"localhost 应当能解析成功（实际状态 %d，结果「%s」）" % [Config.resolve_state(), Config.resolved_address()])
+	_ok(Config.resolved_address().is_valid_ip_address(),
+		"解析结果应当是个 IP，实际「%s」" % Config.resolved_address())
+	_ok(Config.directory_ready(), "解析完成后应当报告「可以发请求」")
+	# **结果只能用在它自己的主机名上。** `_resolved_for` 这个记录就是为这一条存在的：
+	# 测试刚把 localhost 解析了，而配置里的主机名不是它，因此目录地址不该被改掉——
+	# 否则一个测试就会把别的用途的地址污染掉（而那种错很难看出来）。
+	_ok(Config.directory_host() == Config.official_host(),
+		"为别的主机名解析的结果不应影响目录地址（得到「%s」，应当是「%s」）" % [Config.directory_host(), Config.official_host()])
+	# 配置里本来就是 IP 时不应当去查 DNS（备案之后有人直接写 IP 也应当能用）。
+	Config.begin_resolving_for("127.0.0.1")
+	_ok(Config.resolve_state() == Config.Resolve.DONE and Config.resolved_address() == "127.0.0.1",
+		"主机名已经是 IP 时应当直接算完成，实际 %d / 「%s」" % [Config.resolve_state(), Config.resolved_address()])
+
+
 # ---------------------------------------------------------------- 收尾
 
 func _ok(condition: bool, message: String) -> void:
 	_checks += 1
 	if not condition:
 		_failures.append(message)
+
+
+func _finish() -> void:
+	if _failures.is_empty():
+		print("产品常量测试通过（%d 项断言）。" % _checks)
+		quit(0)
+	else:
+		print("产品常量测试失败：")
+		for line in _failures:
+			print("  -- %s" % line)
+		quit(1)

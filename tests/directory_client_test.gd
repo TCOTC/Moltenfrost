@@ -13,11 +13,14 @@ extends SceneTree
 ##   godot --headless --path . --script tests/directory_client_test.gd -- \
 ##         --base http://127.0.0.1:27123 --expect-port 40231
 ##
-## **也可以直接对着真服务器跑**（那时不给 `--expect-port`，因为池里哪一间空着是算出来的）：
-##   godot --headless --path . --script tests/directory_client_test.gd -- \
-##         --base http://moltenfrost-server.mytemos.com:27017
+## **也可以直接对着真服务器跑**，两种方式：
+##   ... -- --from-config                    # 用 config/product.cfg 里的域名（含解析成 IP 这一步）
+##   ... -- --base http://106.52.118.93:27017
+## 前者会额外验"域名解析 → 用 IP 发 HTTP"这条链（就是腾讯云拦截的那个坑，见 product.cfg）。
 ##
 ## 退出码 0 表示全部通过。
+
+const Config := preload("res://scripts/product_config.gd")
 
 const DirectoryClientScript := preload("res://scripts/net/directory_client.gd")
 
@@ -33,6 +36,10 @@ const CLAIM_RETRY_INTERVAL := 2.0
 
 var _base := ""
 var _expect_port := 0
+## 用配置里的域名（而不是 --base）。见文件头。
+var _from_config := false
+## 解析那一步的等待上限（秒）。DNS 正常时是毫秒级。
+const CONFIG_RESOLVE_LIMIT := 12.0
 
 var _checks := 0
 var _failures := PackedStringArray()
@@ -50,6 +57,7 @@ var _listed: Array = []
 var _listed_any := false
 var _claim_retries := CLAIM_RETRIES
 var _retry_elapsed := 0.0
+var _config_resolve_started := false
 var _claim_port := 0
 var _stage := 0
 var _stage_elapsed := 0.0
@@ -58,11 +66,16 @@ var _finished := false
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
+	# 打出来：这个驱动靠 `--` 之后的参数决定跑哪条路，而参数没传到时
+	# 现象是"它去跑另一条路了"，从断言上完全看不出原因。
+	print("[drive] 用户参数：%s" % [args])
 	for i in args.size():
 		if args[i] == "--base" and i + 1 < args.size():
 			_base = String(args[i + 1])
 		elif args[i] == "--expect-port" and i + 1 < args.size():
 			_expect_port = int(args[i + 1])
+		elif args[i] == "--from-config":
+			_from_config = true
 
 
 func _process(delta: float) -> bool:
@@ -74,11 +87,15 @@ func _process(delta: float) -> bool:
 		_finish()
 		return true
 	match _stage:
+		# 用配置里的域名时，先等域名解析完（异步，因此要跳帧）；否则直接开始。
+		# **注意这个 match 里每个编号只能出现一次**：重复时 GDScript 取第一个，
+		# 后面那个就成了死代码，而现象是"参数传了却没生效"。
 		0:
-			_setup()
+			_wait_config_resolve(delta)
 		# 认领的结果必须到（这一步就是真机上的那个 bug）
 		1:
-			_wait_claim()		# 用另一个客户端拉一次列表，确认服务器那边**确实**收到了这次认领
+			_wait_claim()
+		# 用另一个客户端拉一次列表，确认服务器那边**确实**收到了这次认领
 		2:
 			_probe_list()
 		3:
@@ -98,14 +115,50 @@ func _process(delta: float) -> bool:
 ## 每一步的等待上限。认领那一步要额外装下重试预算（池刚重启时要等它补上一间），
 ## 其余步骤就用 STEP_TIMEOUT——坏掉的时候要尽快报出来，而不是干等一分钟。
 func _stage_timeout() -> float:
+	if _stage == 0:
+		return CONFIG_RESOLVE_LIMIT + STEP_TIMEOUT
 	if _stage == 1:
 		return STEP_TIMEOUT + CLAIM_RETRIES * CLAIM_RETRY_INTERVAL
 	return STEP_TIMEOUT
 
 
+## 用配置里的域名时，先把它解析成 IP（与客户端启动时做的事完全一样）。
+##
+## **这一步就是腾讯云拦截那个坑的回归守卫**：配置里存的是域名，而 HTTP 必须用 IP 发，
+## 否则拿到的是 DNSPod 的封禁页（于是"列表永远拉不到"）。
+func _wait_config_resolve(delta: float) -> void:
+	if not _from_config:
+		_setup()
+		return
+	if _stage_elapsed >= CONFIG_RESOLVE_LIMIT:
+		_fail("配置里的域名在 %.0f 秒内没有解析出结果" % CONFIG_RESOLVE_LIMIT)
+		_finish()
+		return
+	if _config_resolve_started and not Config.pump_resolving(delta):
+		return
+	if not _config_resolve_started:
+		Config.load_from_disk()
+		Config.begin_resolving()
+		_config_resolve_started = true
+		print("[drive] 配置：%s" % Config.describe())
+		return
+	# 解析有结果了（成功、失败或超时）。
+	_ok(Config.resolve_state() == Config.Resolve.DONE,
+		"配置里的域名应当能解析成 IP（实际状态 %d）" % Config.resolve_state())
+	_ok(Config.resolved_address().is_valid_ip_address(),
+		"解析结果应当是个 IP，实际「%s」" % Config.resolved_address())
+	_base = Config.official_directory_url()
+	# **地址里必须是 IP 而不是域名**：Host 头是它，而拦截看的就是 Host。
+	_ok(_base.contains(Config.resolved_address()) and not _base.contains(Config.official_host()),
+		"目录地址应当用解析出的 IP（%s，域名是 %s，得到「%s」）" % [
+			Config.resolved_address(), Config.official_host(), _base,
+		])
+	_setup()
+
+
 func _setup() -> void:
 	if _base.is_empty():
-		_fail("没有拿到 --base，检查调用方式（见文件头）")
+		_fail("没有拿到 --base 或 --from-config，检查调用方式（见文件头）")
 		_finish()
 		return
 	_client = DirectoryClientScript.new()

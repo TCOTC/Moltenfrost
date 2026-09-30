@@ -101,16 +101,26 @@ node tools/deploy-server.mjs --host moltenfrost --advertise <域名> --skip-godo
 官方服务器的地址与目录端口在 **`config/product.cfg`**，换机器只改那一个文件
 （改完重启即生效，启动日志里 `[config]` 行会打出生效值与它的来源）。
 
-**那个文件里的 `official_host` 填的是 IP，不是域名**，而且必须如此：
+**那里存的是域名，而客户端会在启动时把它解析成 IP 再用**。这一步不是多余的：
 腾讯云会拦截发往**未备案域名**的 HTTP 请求（302 到 DNSPod 的封禁页），而客户端拉列表
-与创建房间走的都是 HTTP。域名只用于 UDP（房间地址，由服务端的 `--advertise` 给出），
-UDP 不受这条拦截影响。判据：在客户端机器上
+与创建房间走的都是 HTTP。拦截看的是 `Host` 头，换成 IP 之后就绕开了它。
+解析是异步的，失败（或 5 秒超时）就退回用域名——那时若域名已备案，照样能用。
+启动日志里会写清楚用了哪个：
+
+```text
+[config] 官方房间目录：moltenfrost-server.mytemos.com:27017（来自 res://config/product.cfg；域名解析为 106.52.118.93）
+```
+
+域名对 **UDP 完全正常**（房间地址由服务端的 `--advertise` 给出，实测 RTT 20 ms），
+所以"域名 vs IP"这件事只发生在目录这一条 HTTP 路径上。若哪天列表拉不到，
+判据是：在客户端机器上
 
 ```powershell
 curl.exe -s -o NUL -w "%{http_code} %{redirect_url}" http://<域名>:27017/rooms
 ```
 
-看到 `302` 加一个 `dnspod.qcloud.com` 的地址就是它。（实测 2026-09-30，同一个 URL 换成 IP 就是 200。）
+看到 `302` 加一个 `dnspod.qcloud.com` 的地址就是被拦了（实测 2026-09-30，
+同一个 URL 换成 IP 就是 200）。
 
 **安全组要两条**：`TCP:27017`（目录）与 `UDP:40001-40020`（房间段，要覆盖整段而不是某几个号，
 因为池会换端口）。缺一个都是"连不上"，但现象不同：目录没放行 → 列表拉不到；

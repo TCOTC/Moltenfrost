@@ -185,8 +185,23 @@ func _process(delta: float) -> void:
 
 
 func _fetch_directory() -> void:
-	# 地址取自 config/product.cfg（换机器/换域名只改那一个文件）。
+	# **地址还没解析出来时不发。** 拿域名去发一次注定被拦的请求，
+	# 报出来的错是"拉不到列表"，而那与"服务坏了"长得一模一样。
+	# 等几百毫秒（解析是异步的）比给一个误导的报错好。
+	if not ProductConfig.directory_ready():
+		_rebuild_list()
+		return
+	# 地址取自 config/product.cfg（换机器只改那一个文件）。
 	_directory_client.fetch_rooms(ProductConfig.official_directory_url())
+
+
+## 立刻把目录列表重拉一次。给入口脚本用：**域名解析刚完成**时用得上，
+## 否则要等到下一个刷新周期（最多 3 秒），而那几秒里玩家会以为列表是空的。
+func refresh_directory_now() -> void:
+	if not visible or _busy:
+		return
+	_directory_elapsed = 0.0
+	_fetch_directory()
 
 
 ## 关闭界面并停止探测。房间的广播不在这里处理：那是创建房间那一方的责任，
@@ -273,6 +288,13 @@ func _create_public_room() -> void:
 ## 发一次认领请求。失败与“稍等”都由 _on_claim_finished 处理。
 func _request_public_room() -> void:
 	_claiming = true
+	if not ProductConfig.directory_ready():
+		# 域名还没解析出来。现在发出去只会撞上拦截，而报错会误导成"服务坏了"。
+		# 走与"服务器正在准备房间"同一条重试路径（看门狗仍在计时，因此不会卡死）。
+		_claim_waiting = true
+		_claim_elapsed = 0.0
+		_set_busy("正在解析官方服务器地址…")
+		return
 	_set_busy("正在向官方服务器要一间房…")
 	_directory_client.claim_room(ProductConfig.official_directory_url())
 
@@ -437,6 +459,9 @@ func _rebuild_list() -> void:
 func _list_summary() -> String:
 	var lan := _lan_rooms.size()
 	var official := _official_rooms.size()
+	if not ProductConfig.directory_ready():
+		# 域名正在解析（启动后的几百毫秒）。说清楚，否则玩家会把它当成"一个房间都没有"。
+		return "正在解析官方服务器地址…局域网里有 %d 个房间；也可以在右边自建一间。" % lan
 	if not _directory_ok:
 		return "官方房间列表拉不到（%s）。局域网里有 %d 个房间；也可以在右边自建一间。" % [_directory_error, lan]
 	if lan == 0 and official == 0:

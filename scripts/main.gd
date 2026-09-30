@@ -172,6 +172,10 @@ func _start_session() -> void:
 	# 与 [feel] 行同一个道理：外部配置文件最容易出的问题是"改了但没生效"，
 	# 而一行日志就能把它变成一眼可见；不打印的话只能靠打开界面看列表才知道。
 	ProductConfig.load_from_disk()
+	# **域名要先解析成 IP 再用。** 客户端拉列表与创建房间走的都是 HTTP，
+	# 而腾讯云会拦发往未备案域名的 HTTP 请求（见 config/product.cfg），
+	# 换成 IP 就通。异步做，因此不阻塞启动；结果由 _process 里的 pump 收。
+	ProductConfig.begin_resolving()
 	print("[config] 官方房间目录：%s" % ProductConfig.describe())
 	_report_feel()
 
@@ -898,6 +902,7 @@ func _peer_node_name(id: int) -> String:
 ##   重复 高 → 发送方位置变化比快照发送慢（物理帧率低于网络帧率），已自动处理
 func _process(delta: float) -> void:
 	_check_stop_file(delta)
+	_on_directory_address_settled(ProductConfig.pump_resolving(delta))
 	if not _stats_enabled:
 		return
 	var frame_ms := delta * 1000.0
@@ -918,6 +923,20 @@ func _process(delta: float) -> void:
 	for child in _players.get_children():
 		if child is Player:
 			_report_player(child as Player)
+
+
+## 目录地址的解析有结果了（成功、失败或超时）。
+##
+## 失败了也要在这里处理：界面不能一直等一个不会来的结果（`directory_ready()` 会把
+## FAILED 当成可用，于是它拿域名去试——若那个域名没被拦，照样能用）。
+func _on_directory_address_settled(settled: bool) -> void:
+	if not settled:
+		return
+	print("[config] 官方房间目录：%s" % ProductConfig.describe())
+	# 解析成功的场合，界面可能已经开着了，而且它刚才因为"地址还没就绪"没有拉列表。
+	# 不等下一个刷新周期（最多 3 秒）——那三秒里玩家会以为列表是空的。
+	if _menu != null and _menu.visible:
+		_menu.refresh_directory_now()
 
 
 ## 显示滞后的构成估算。它回答的是"我看别人的动作慢多少"，即别人按下按键到我看见位移的总时延。

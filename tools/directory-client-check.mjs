@@ -1,6 +1,10 @@
 // 目录客户端的接线自检：起一个**真目录** + 一个假房间，再让真客户端去认领。
 //
-//   node tools/directory-client-check.mjs [--godot <路径>] [--python <路径>]
+//   node tools/directory-client-check.mjs [--godot <路径>] [--python <路径>] [--real]
+//
+// 默认只跑本地那一轮（起一个假目录，不需要外网）。加 `--real` 会**额外**用
+// config/product.cfg 里的域名跑一轮——那一轮会真的解析域名、连真的服务器，
+// 因此它验的是"域名 → IP → HTTP 能用"这条链（腾讯云拦未备案域名的那个坑）。
 //
 // 为什么单独一条：这里要验的是"请求真的发出去了、回信真的到了"，而
 // tests/menu_test.gd 里那个目录客户端替身恰好把这两件事都跳过了。
@@ -106,6 +110,20 @@ try {
   }
   ok(driver.status === 0, `客户端驱动的断言全部通过（退出码 ${driver.status}）`);
   ok(/目录客户端接线测试通过/.test(output), "驱动跑完并打印了通过结论");
+
+  // 可选：用**配置里的域名**跑一轮。默认不跑，因为它要外网 DNS 与一台真的服务器。
+  if (args.includes("--real")) {
+    console.log("\n--- 额外一轮：直接用 config/product.cfg 里的域名（验域名解析）---");
+    const real = spawnSync(GODOT, [
+      "--headless", "--path", REPO, "--script", "tests/directory_client_test.gd",
+      "--", "--from-config",
+    ], { cwd: REPO, encoding: "utf8", timeout: 120000 });
+    const realOut = `${real.stdout || ""}\n${real.stderr || ""}`;
+    process.stdout.write(realOut.endsWith("\n") ? realOut : `${realOut}\n`);
+    ok(real.status === 0, `对着真配置跑也通过（退出码 ${real.status}）`);
+    ok(/目录地址应当用解析出的 IP/.test(realOut) && !/--  目录地址应当用解析出的 IP/.test(realOut),
+      "目录地址确实用的是解析出的 IP（而不是域名）");
+  }
 } catch (err) {
   console.log(`  --  异常：${err && err.stack ? err.stack : err}`);
   failures.push("异常");
