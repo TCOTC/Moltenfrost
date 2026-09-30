@@ -23,6 +23,13 @@ const DirectoryClientScript := preload("res://scripts/net/directory_client.gd")
 
 ## 每一步的等待上限（秒）。认领最坏情况要等目录那边补一间，给它宽一点。
 const STEP_TIMEOUT := 20.0
+## 拿到 `waiting`（目录暂时没有空房）之后重试的上限与间隔。
+##
+## 需要它是因为**池刚重启时前几秒确实没有备用房**（对账 2 秒 + 房间启动一两秒），
+## 而目录回答的 `waiting` 是 HTTP 200，不是错误。界面也是这么重试的
+## （scripts/menu.gd 的 CLAIM_RETRY_INTERVAL / CLAIM_RETRY_LIMIT）。
+const CLAIM_RETRIES := 15
+const CLAIM_RETRY_INTERVAL := 2.0
 
 var _base := ""
 var _expect_port := 0
@@ -41,6 +48,8 @@ var _listed: Array = []
 ## 空列表是一个完全合法的响应（目录里现在真没人公开房间），把两者混为一谈
 ## 会让这一步白等到超时——而且看起来像功能坏了。
 var _listed_any := false
+var _claim_retries := CLAIM_RETRIES
+var _retry_elapsed := 0.0
 var _claim_port := 0
 var _stage := 0
 var _stage_elapsed := 0.0
@@ -60,8 +69,8 @@ func _process(delta: float) -> bool:
 	if _finished:
 		return true
 	_stage_elapsed += delta
-	if _stage_elapsed > STEP_TIMEOUT:
-		_fail("第 %d 步等了 %.0f 秒没有结果" % [_stage, STEP_TIMEOUT])
+	if _stage_elapsed > _stage_timeout():
+		_fail("第 %d 步等了 %.0f 秒没有结果" % [_stage, _stage_timeout()])
 		_finish()
 		return true
 	match _stage:
@@ -69,8 +78,7 @@ func _process(delta: float) -> bool:
 			_setup()
 		# 认领的结果必须到（这一步就是真机上的那个 bug）
 		1:
-			_wait_claim()
-		# 用另一个客户端拉一次列表，确认服务器那边**确实**收到了这次认领
+			_wait_claim()		# 用另一个客户端拉一次列表，确认服务器那边**确实**收到了这次认领
 		2:
 			_probe_list()
 		3:
@@ -86,6 +94,14 @@ func _process(delta: float) -> bool:
 
 
 # ---------------------------------------------------------------- 步骤
+
+## 每一步的等待上限。认领那一步要额外装下重试预算（池刚重启时要等它补上一间），
+## 其余步骤就用 STEP_TIMEOUT——坏掉的时候要尽快报出来，而不是干等一分钟。
+func _stage_timeout() -> float:
+	if _stage == 1:
+		return STEP_TIMEOUT + CLAIM_RETRIES * CLAIM_RETRY_INTERVAL
+	return STEP_TIMEOUT
+
 
 func _setup() -> void:
 	if _base.is_empty():
@@ -105,14 +121,27 @@ func _setup() -> void:
 func _wait_claim() -> void:
 	if _claims.is_empty():
 		return
-	var result: Dictionary = _claims[0]
-	_ok(bool(result.get("ok", false)), "列表请求在飞时发起的认领也拿到了房间（实际 %s）" % result)
+	var result: Dictionary = _claims[_claims.size() - 1]
+	# **这一步的回归断言是"回信到了"，不是"回信说 ok"。**
+	# 真机上坏掉的是请求根本没发出去（界面那边于是永远等下去），
+	# 而 `waiting` 是一个完全正常的回答：池刚重启那几秒就是没有备用房。
+	if not bool(result.get("ok", false)) and bool(result.get("waiting", false)) and _claim_retries > 0:
+		_claim_retries -= 1
+		_retry_elapsed += 1.0
+		if _retry_elapsed >= CLAIM_RETRY_INTERVAL:
+			_retry_elapsed = 0.0
+			# 与界面同一条路：再发一次认领（客户端会排队，不会丢）。
+			_client.claim_room(_base)
+		return
+	_ok(_claims.size() > 0, "认领收到了回信（共 %d 次，最后一次 %s）" % [_claims.size(), result])
+	_ok(bool(result.get("ok", false)), "最终拿到了房间（实际 %s）" % result)
 	_claim_port = int(result.get("port", 0))
 	if _expect_port > 0:
 		_ok(_claim_port == _expect_port, "拿到的应当是目录里那一间（期望 %d，实际 %d）" % [_expect_port, _claim_port])
 	else:
 		# 对着真服务器跑时不知道哪一间空着（池里那几间是算出来的），只查"拿到了一个端口"。
 		_ok(_claim_port > 0, "认领应当给出一个端口（实际 %d）" % _claim_port)
+	# 这一步的等待上限要按重试预算放宽（池刚重启时要等它补上一间）。
 	_next_stage()
 
 
