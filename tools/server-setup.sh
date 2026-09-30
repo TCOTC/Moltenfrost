@@ -290,15 +290,23 @@ EOF
 
   # ------------------------------------------------------------ 网关
   if [[ "$GATEWAY" == "1" ]]; then
-    # 房间列表在这里拼好写进单元里。它不做探活：某个房间挂了由它自己的
-    # Restart=always 兜住，而网关只按人数最少来分（见 tools/net-gateway.c）。
-    # 待办：真需要的话给房间加一个探活（方案文档里记着这一条）。
+    # 房间列表在这里拼好写进单元里。
+    #
+    # **它不做探活，这是刻意的。** 试过"有人却不往外发包的房间算坏、选房跳过"，
+    # 实测会把刚重启的房间误判为坏，而且误判粘住（占名额的旧流要等 --idle 才回收），
+    # 结果把玩家赶到别的房间。详见 tools/net-gateway.c 的 pick_room 与方案文档。
+    # 卡死的房间靠它自己的 Restart=always 与客户端 10 秒连接超时兜住。
     room_list=""
     for ((i = 0; i < ROOM_COUNT; i++)); do
       port=$((ROOM_BASE_PORT + i))
       [[ -n "$room_list" ]] && room_list="${room_list},"
       room_list="${room_list}127.0.0.1:${port}"
     done
+    # --idle 30（默认是 60）：客户端**消失**多久之后释放它的名额。
+    # 客户端正常退出时会发断开通知，网关立刻就知道，所以这个值只在客户端被强杀
+    #（断网、断电、taskkill）时起作用。30 秒既不至于把短暂掉线的人踢掉，
+    # 也不会让名额被占太久——后者在重跑验证脚本时很明显（占着名额会让新一轮
+    # 客户端全被拒，看着像网关坏了）。
     sudo tee "/etc/systemd/system/${SERVICE_NAME}-gateway.service" >/dev/null <<EOF
 [Unit]
 Description=Moltenfrost UDP gateway on port ${GATEWAY_PORT}
@@ -311,7 +319,7 @@ Wants=network-online.target
 Type=simple
 User=${USER}
 WorkingDirectory=${REPO_DIR}
-ExecStart=${REPO_DIR}/build/net-gateway --listen ${GATEWAY_PORT} --rooms ${room_list} --max-per-room ${MAX_PER_ROOM} --stats 60
+ExecStart=${REPO_DIR}/build/net-gateway --listen ${GATEWAY_PORT} --rooms ${room_list} --max-per-room ${MAX_PER_ROOM} --idle 30 --stats 60
 Restart=always
 RestartSec=2
 KillSignal=SIGTERM

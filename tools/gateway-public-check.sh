@@ -31,6 +31,14 @@ DURATION=${DURATION:-18}
 DRAIN=${DRAIN:-14}
 # 只跑某一阶段（all / 1 / 2）。排查时用，省得每次都跑两遍。
 PHASE=${PHASE:-all}
+# 两阶段之间重启网关，把它的流表清空。
+#
+# 为什么需要：网关按 --idle（默认 60 秒）保留客户端流，而**被强杀的客户端不会
+# 发断开通知**，于是上一轮的连接会占着房间名额，新一轮客户端全部被拒——
+# 现象是"第二阶段两端都没有进关"，而真因与自己写的代码无关（实测就踩了一次）。
+# 重启网关是一秒级且确定性的做法，比等 60 秒划算。
+# 拿不到 sudo 时跳过（只影响能不能连续重跑）。
+RESET_GATEWAY=${RESET_GATEWAY:-1}
 # 第二阶段的场景：它做真人在这里会做的事（房主请求开局），并断言两端都进了关。
 DRIVE=res://tests/lobby_start_drive.tscn
 
@@ -64,6 +72,28 @@ kill_all() {
 	for pid in "$@"; do kill -9 "$pid" 2>/dev/null; done
 }
 
+reset_gateway() {
+	[ "$RESET_GATEWAY" = "1" ] || return 0
+	# 内层引号用「」而不是英文引号：在双引号字符串里再嵌一对双引号虽然语法上成立，
+	# 但拼出来的提示会少一段，看着像脚本坏了。
+	sudo systemctl restart moltenfrost-gateway 2>/dev/null || {
+		echo "（无法重启网关，继续；若下面报「房间满了」，跑之前先手动重启一次）"
+		return 0
+	}
+	sleep 2
+}
+
+# 从网关日志里取最近的几个“房间满了”痕迹。它们说明这一轮的失败**不是自己代码的问题**，
+# 而是上一轮的连接还占着名额。不区分的话，这两种情况在输出上完全一样。
+full_note() {
+	local hits
+	hits=$(sudo journalctl -u moltenfrost-gateway --no-pager -n 200 2>/dev/null | grep -ac 'gateway\] full' || true)
+	if [ "${hits:-0}" -gt 0 ]; then
+		echo "！！ 网关日志里有“房间满了”的记录：可能是上一轮的连接还占着名额（网关要 --idle 秒才回收），"
+		echo "    或者真的都满了。先 RESET_GATEWAY=1 重跑，或者少开几个客户端。"
+	fi
+}
+
 # ================================================================ 第一阶段
 
 if [ "$PHASE" != "2" ]; then
@@ -88,7 +118,9 @@ if [ "$PHASE" != "2" ]; then
 		echo "OK: 先到的那一端看到了 2 个人（= 两人被分到了同一间房）"
 	else
 		echo "FAIL: 先到的那一端没有看到 2 个人 —— 两人可能被分到不同房间（检查网关的选房策略）"
+		full_note
 	fi
+	reset_gateway
 	sleep "$DRAIN"
 fi
 
@@ -121,6 +153,7 @@ if [ "$PHASE" != "1" ]; then
 		echo "OK: 有一端作为房主请求了开局"
 	else
 		echo "FAIL: 两端都没有请求开局（人齐的判定或房主判定不对）"
+		full_note
 	fi
 	echo "第二阶段通过 $pass/2 端"
 fi

@@ -252,8 +252,21 @@ static int pick_room(void) {
 /* 返回流下标，失败返回 -1（房间满 / 流表满 / 建套接字失败）。 */
 static int flow_open(const struct sockaddr_in *client) {
 	int room = pick_room();
-	if (room < 0 || g_free_top == 0)
+	if (room < 0 || g_free_top == 0) {
+		/* 这一行在两种情况下都很关键：
+		 *   生产里 —— 它就是"房间都满了，这位稍后再试"，而客户端那边只会看到超时；
+		 *   测试时 —— 上一轮遗留的连接要等 --idle 秒才回收，过后重跑就会这样被拒，
+		 *           而没有这一行时它看起来像"网关坏了"。 */
+		static double last_report = 0.0;
+		double now = now_seconds();
+		if (now - last_report > 5.0) {
+			last_report = now;
+			printf("[gateway] full: dropped a client (rooms=%s, freed slots=%d)\n",
+			       room_counts_text(), g_free_top);
+			fflush(stdout);
+		}
 		return -1;
+	}
 
 	int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
 	if (fd < 0 || fd >= FD_MAX) {
