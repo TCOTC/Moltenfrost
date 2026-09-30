@@ -69,15 +69,20 @@ func _case_setup() -> void:
 	Discovery.discovery_port = TEST_DISCOVERY_PORT
 	_menu = MENU_SCENE.instantiate()
 	root.add_child(_menu)
-	_menu.host_requested.connect(func(room_name: String, port: int) -> void:
-		_host_calls.append([room_name, port]))
+	_menu.host_requested.connect(func(room_name: String, port: int, kind: int) -> void:
+		_host_calls.append([room_name, port, kind]))
 	_menu.join_requested.connect(func(address: String, port: int) -> void:
 		_join_calls.append([address, port]))
 	_ok(not _menu.visible, "初始界面上场时应当是隐藏的（何时打开由入口脚本决定）")
 	_menu.open(MENU_PORT)
 	_ok(_menu.visible, "open() 之后界面应当可见")
-	_ok(_line("DirectRow/Port").text == str(MENU_PORT), "端口应当预填默认值，实际「%s」" % _line("DirectRow/Port").text)
+	_ok(_line("PortRow/Port").text == str(MENU_PORT), "端口应当预填默认值，实际「%s」" % _line("PortRow/Port").text)
 	_ok(not _line("HostRow/RoomName").text.is_empty(), "房间名应当有默认值")
+	# 默认类型必须是局域网：它是当前唯一能完整跑通的，
+	# 而把默认值定在一个尚不可用的选项上会让第一次点「创建房间」就失败。
+	_ok(_button("KindRow/Lan").button_pressed, "公开类型应当默认选中局域网")
+	_ok(not _button("KindRow/Public").button_pressed, "公网不应当默认选中")
+	_ok(not _button("KindRow/Lan").disabled, "类型按钮不应当在一开始就被锁上")
 	_ok(_button("RoomButtons/Join").disabled, "没有选中房间时，加入按钮应当是灰的")
 	# 起一个广播源，模拟另一台机器已经创建了房间。这里走的是真实 UDP 路径。
 	_announcer = Discovery.new()
@@ -165,26 +170,44 @@ func _lan_index() -> int:
 
 func _case_actions() -> void:
 	# 端口填错：不发信号，只在状态栏提示。
-	_line("DirectRow/Port").text = NOT_A_PORT
+	_line("PortRow/Port").text = NOT_A_PORT
 	_button("HostRow/Host").pressed.emit()
 	_ok(_host_calls.is_empty(), "端口不是数字时，创建房间不应当发出信号")
 	_ok(not _status().text.is_empty(), "端口不合法时状态栏应当给出提示")
 
-	# 创建房间：房间名要去掉首尾空白，端口取输入框里的值。
-	_line("DirectRow/Port").text = str(MENU_PORT)
+	# 创建房间：房间名要去掉首尾空白，端口取输入框里的值，并带上当前选中的类型。
+	_line("PortRow/Port").text = str(MENU_PORT)
 	_line("HostRow/RoomName").text = CUSTOM_ROOM_NAME
 	_button("HostRow/Host").pressed.emit()
 	_ok(_host_calls.size() == 1, "点创建房间应当发出一次 host_requested，实际 %d 次" % _host_calls.size())
 	if _host_calls.size() == 1:
 		_ok(String(_host_calls[0][0]) == CUSTOM_ROOM_NAME.strip_edges(), "房间名应当去掉首尾空白，实际「%s」" % _host_calls[0][0])
 		_ok(int(_host_calls[0][1]) == MENU_PORT, "端口应当取自输入框，实际 %d" % int(_host_calls[0][1]))
+		_ok(int(_host_calls[0][2]) == Lobby.Kind.LAN, "默认应当是局域网类型，实际 %d" % int(_host_calls[0][2]))
+
+	# 选公网：必须**不发信号**，只在状态栏说明。这一条锁的是“界面不假装功能已具备”——
+	# 真让它发出 host_requested，入口脚本会在本机开一个跨网连不上的房间，
+	# 而界面上它与真公网房间长得一模一样，事后极难看出是假的。
+	_button("KindRow/Public").button_pressed = true
+	_line("HostRow/RoomName").text = CUSTOM_ROOM_NAME
+	_button("HostRow/Host").pressed.emit()
+	_ok(_host_calls.size() == 1, "选公网时创建房间不应当再发一次 host_requested，实际共 %d 次" % _host_calls.size())
+	_ok(_status().text.contains("公网"), "选公网时状态栏应当说明它需要官方服务端，实际「%s」" % _status().text)
+	_ok(_label("KindHint").text.contains("公网"), "类型说明行应当跟着切到公网的说明")
+
+	# 切回局域网：再点一次应当能正常创建，且带上的类型是局域网。
+	_button("KindRow/Lan").button_pressed = true
+	_button("HostRow/Host").pressed.emit()
+	_ok(_host_calls.size() == 2, "切回局域网后应当能再次创建房间，实际共 %d 次" % _host_calls.size())
+	if _host_calls.size() == 2:
+		_ok(int(_host_calls[1][2]) == Lobby.Kind.LAN, "切回局域网后应当带上局域网类型，实际 %d" % int(_host_calls[1][2]))
 
 	# 手动加入：地址与端口都取自输入框。
 	# 计数用"调用前先记一笔"的方式，不写死序号——上一个阶段已经发过两次 join_requested，
 	# 写死序号会让这一条在别的断言增删之后悄悄失效。
 	var before := _join_calls.size()
 	_line("DirectRow/Address").text = "127.0.0.1"
-	_line("DirectRow/Port").text = str(MENU_PORT)
+	_line("PortRow/Port").text = str(MENU_PORT)
 	_button("DirectRow/Direct").pressed.emit()
 	_ok(_join_calls.size() == before + 1, "手动填地址后点加入应当再发一次 join_requested，实际增了 %d 次" % (_join_calls.size() - before))
 	if _join_calls.size() == before + 1:
@@ -219,6 +242,10 @@ func _line(path: String) -> LineEdit:
 
 
 func _button(path: String) -> Button:
+	return _menu.get_node(_prefix(path) + path)
+
+
+func _label(path: String) -> Label:
 	return _menu.get_node(_prefix(path) + path)
 
 

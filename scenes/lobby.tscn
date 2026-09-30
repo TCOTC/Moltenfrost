@@ -1,0 +1,160 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/lobby.gd" id="1_lobby"]
+[ext_resource type="Script" path="res://scripts/ui/backdrop.gd" id="2_backdrop"]
+
+[node name="Lobby" type="CanvasLayer"]
+layer = 2
+visible = false
+script = ExtResource("1_lobby")
+
+[node name="Backdrop" type="Control" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("2_backdrop")
+
+[node name="Base" type="ColorRect" parent="Backdrop"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.027451, 0.039216, 0.058824, 0.898039)
+
+[node name="Root" type="MarginContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 72
+theme_override_constants/margin_top = 48
+theme_override_constants/margin_right = 72
+theme_override_constants/margin_bottom = 40
+
+[node name="Layout" type="VBoxContainer" parent="Root"]
+theme_override_constants/separation = 14
+
+[node name="Header" type="VBoxContainer" parent="Root/Layout"]
+theme_override_constants/separation = 2
+
+[node name="Tag" type="Label" parent="Root/Layout/Header"]
+theme_override_colors/font_color = Color(0.427451, 0.843137, 0.988235, 1)
+theme_override_font_sizes/font_size = 18
+text = "等待房间"
+
+[node name="RoomName" type="Label" parent="Root/Layout/Header"]
+theme_override_colors/font_color = Color(0.972549, 0.784314, 0.552941, 1)
+theme_override_font_sizes/font_size = 46
+text = "房间"
+
+[node name="Rule" type="HSeparator" parent="Root/Layout"]
+
+[node name="SpacerTop" type="Control" parent="Root/Layout"]
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="Body" type="HBoxContainer" parent="Root/Layout"]
+theme_override_constants/separation = 24
+
+[node name="PlayersPanel" type="PanelContainer" parent="Root/Layout/Body"]
+size_flags_horizontal = 3
+
+[node name="PlayersMargin" type="MarginContainer" parent="Root/Layout/Body/PlayersPanel"]
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 20
+
+[node name="PlayersBox" type="VBoxContainer" parent="Root/Layout/Body/PlayersPanel/PlayersMargin"]
+theme_override_constants/separation = 12
+
+[node name="PlayersTitle" type="Label" parent="Root/Layout/Body/PlayersPanel/PlayersMargin/PlayersBox"]
+theme_override_colors/font_color = Color(0.427451, 0.843137, 0.988235, 1)
+theme_override_font_sizes/font_size = 22
+text = "在场的人"
+
+[node name="Count" type="Label" parent="Root/Layout/Body/PlayersPanel/PlayersMargin/PlayersBox"]
+theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
+theme_override_font_sizes/font_size = 15
+text = "在场 0 人"
+
+[node name="Players" type="VBoxContainer" parent="Root/Layout/Body/PlayersPanel/PlayersMargin/PlayersBox"]
+custom_minimum_size = Vector2(0, 140)
+theme_override_constants/separation = 8
+
+[node name="InfoPanel" type="PanelContainer" parent="Root/Layout/Body"]
+size_flags_horizontal = 3
+
+[node name="InfoMargin" type="MarginContainer" parent="Root/Layout/Body/InfoPanel"]
+theme_override_constants/margin_left = 22
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 22
+theme_override_constants/margin_bottom = 20
+
+[node name="InfoBox" type="VBoxContainer" parent="Root/Layout/Body/InfoPanel/InfoMargin"]
+theme_override_constants/separation = 10
+
+[node name="InfoTitle" type="Label" parent="Root/Layout/Body/InfoPanel/InfoMargin/InfoBox"]
+theme_override_colors/font_color = Color(0.972549, 0.784314, 0.552941, 1)
+theme_override_font_sizes/font_size = 22
+text = "房间信息"
+
+[node name="Kind" type="Label" parent="Root/Layout/Body/InfoPanel/InfoMargin/InfoBox"]
+theme_override_colors/font_color = Color(0.803922, 0.843137, 0.894118, 1)
+theme_override_font_sizes/font_size = 18
+text = "类型 · 局域网"
+
+[node name="AddressTitle" type="Label" parent="Root/Layout/Body/InfoPanel/InfoMargin/InfoBox"]
+theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
+theme_override_font_sizes/font_size = 15
+text = "对方加入时填这个地址（可选中复制）"
+autowrap_mode = 3
+
+[node name="Address" type="Label" parent="Root/Layout/Body/InfoPanel/InfoMargin/InfoBox"]
+theme_override_colors/font_color = Color(0.427451, 0.843137, 0.988235, 1)
+theme_override_font_sizes/font_size = 24
+text = "—"
+selectable = true
+
+[node name="Spacer" type="Control" parent="Root/Layout/Body/InfoPanel/InfoMargin/InfoBox"]
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="StartHint" type="Label" parent="Root/Layout/Body/InfoPanel/InfoMargin/InfoBox"]
+theme_override_colors/font_color = Color(0.560784, 0.615686, 0.705882, 1)
+theme_override_font_sizes/font_size = 15
+autowrap_mode = 3
+
+[node name="SpacerBottom" type="Control" parent="Root/Layout"]
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="Footer" type="VBoxContainer" parent="Root/Layout"]
+theme_override_constants/separation = 8
+
+[node name="Buttons" type="HBoxContainer" parent="Root/Layout/Footer"]
+theme_override_constants/separation = 12
+
+[node name="Leave" type="Button" parent="Root/Layout/Footer/Buttons"]
+custom_minimum_size = Vector2(180, 52)
+text = "离开房间"
+
+[node name="Spacer" type="Control" parent="Root/Layout/Footer/Buttons"]
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="Start" type="Button" parent="Root/Layout/Footer/Buttons"]
+custom_minimum_size = Vector2(360, 52)
+text = "开始游戏"
+
+[node name="Status" type="Label" parent="Root/Layout/Footer"]
+custom_minimum_size = Vector2(0, 44)
+theme_override_colors/font_color = Color(0.780392, 0.831373, 0.921569, 1)
+theme_override_font_sizes/font_size = 16
+autowrap_mode = 3

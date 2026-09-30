@@ -23,7 +23,7 @@ extends CanvasLayer
 ## 那个地址**不写在这里**，而是读 config/product.cfg（见 scripts/product_config.gd）：
 ## 它随部署变化（换机器、换域名），而界面只是它的一个使用者。
 
-signal host_requested(room_name: String, port: int)
+signal host_requested(room_name: String, port: int, kind: int)
 signal join_requested(address: String, port: int)
 
 ## 固定条目在列表里的显示名。带"官方"二字是为了与探测到的玩家房间区分开。
@@ -40,19 +40,30 @@ var _discovery: LanDiscovery = null
 var _busy := false
 ## 列表里当前选中的房间，为空表示没有选中任何房间。
 var _selected: Dictionary = {}
+## 创建房间时选的公开类型（Lobby.Kind）。默认局域网：它是当前唯一能完整跑通的，
+## 而把默认值定在一个尚不可用的选项上会让第一次点「创建房间」就失败。
+var _room_kind: int = Lobby.Kind.LAN
 
 @onready var _rooms: ItemList = $Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox/Rooms
 @onready var _refresh: Button = $Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox/RoomButtons/Refresh
 @onready var _join: Button = $Root/Layout/Body/RoomsPanel/RoomsMargin/RoomsBox/RoomButtons/Join
 @onready var _room_name: LineEdit = $Root/Layout/Body/HostPanel/HostMargin/HostBox/HostRow/RoomName
 @onready var _host: Button = $Root/Layout/Body/HostPanel/HostMargin/HostBox/HostRow/Host
+@onready var _lan_kind: Button = $Root/Layout/Body/HostPanel/HostMargin/HostBox/KindRow/Lan
+@onready var _pub_kind: Button = $Root/Layout/Body/HostPanel/HostMargin/HostBox/KindRow/Public
+@onready var _kind_hint: Label = $Root/Layout/Body/HostPanel/HostMargin/HostBox/KindHint
 @onready var _address: LineEdit = $Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow/Address
-@onready var _port: LineEdit = $Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow/Port
+## 端口只有这一格，创建房间与手动填地址加入共用。
+## 拆成两格反而更难用：填了一个以为两个都改了，是这类界面最常见的报错来源。
+@onready var _port: LineEdit = $Root/Layout/Body/HostPanel/HostMargin/HostBox/PortRow/Port
 @onready var _direct: Button = $Root/Layout/Body/HostPanel/HostMargin/HostBox/DirectRow/Direct
 @onready var _status: Label = $Root/Layout/Footer/Status
 
 ## 可禁用/可编辑的输入控件。创建或连接进行中会把它们锁上。
 var _inputs: Array[Control] = []
+## 列表空着时显示在那块区域里的说明。它不是一个新控件类型，
+## 而是把一句提示叠在列表上方——ItemList 自己没有“占位文案”这个能力。
+var _empty_hint: Label = null
 
 
 func _ready() -> void:
@@ -64,7 +75,16 @@ func _ready() -> void:
 	# 界面上的第一眼应该落在"开一局"与"进入选中的房间"上，而不是一排长得一样的按钮。
 	GameTheme.apply_primary(_join)
 	GameTheme.apply_primary(_host)
-	_inputs = [_refresh, _join, _host, _direct, _room_name, _address, _port]
+	_inputs = [_refresh, _join, _host, _direct, _room_name, _address, _port, _lan_kind, _pub_kind]
+	# 两个类型按钮靠 ButtonGroup 互斥，因此“选中”这件事只有一份状态（按钮自己），
+	# 不需要另外维护一个“当前选中的是哪个”的变量去与界面对齐。
+	var kind_group := ButtonGroup.new()
+	_lan_kind.button_group = kind_group
+	_pub_kind.button_group = kind_group
+	_lan_kind.button_pressed = true
+	_lan_kind.toggled.connect(func(on: bool) -> void: if on: _set_room_kind(Lobby.Kind.LAN))
+	_pub_kind.toggled.connect(func(on: bool) -> void: if on: _set_room_kind(Lobby.Kind.PUBLIC))
+	_refresh_kind_hint()
 	# 探测逻辑是界面自己的子节点：界面关掉就不再接收广播，也就不会占用探测端口。
 	_discovery = LanDiscovery.new()
 	_discovery.rooms_changed.connect(_on_rooms_changed)
@@ -77,6 +97,7 @@ func _ready() -> void:
 	_rooms.item_activated.connect(_on_room_activated)
 	_port.text = str(Net.DEFAULT_PORT)
 	_room_name.text = LanDiscovery.default_room_name()
+	_build_empty_hint()
 	_update_join_enabled()
 
 
@@ -119,10 +140,16 @@ func _on_refresh_pressed() -> void:
 	_start_probing()
 
 
-## 创建房间：把房间名与端口交给入口脚本，由它决定怎么启动服务端。
+## 创建房间：把房间名、端口与公开类型交给入口脚本，由它决定怎么启动服务端。
 func _on_host_pressed() -> void:
 	var port := _parse_port()
 	if port <= 0:
+		return
+	if _room_kind == Lobby.Kind.PUBLIC:
+		# 公网房间要开在官方服务器上，而服务端那一侧还没有（见 docs/公网房间方案.md）。
+		# 这里如实说明，而不是在本机开一个表面叫“公网”的房间：
+		# 那种房间跨网根本连不上，而界面上它看起来与真公网房间一模一样。
+		_set_status("公网房间需要官方服务端支持，当前版本请选「局域网」。")
 		return
 	var room_name := _room_name.text.strip_edges()
 	if room_name.is_empty():
@@ -130,7 +157,7 @@ func _on_host_pressed() -> void:
 	# 写回界面，让玩家看到实际生效的房间名。
 	_room_name.text = room_name
 	_set_busy("正在创建房间…")
-	host_requested.emit(room_name, port)
+	host_requested.emit(room_name, port, _room_kind)
 
 
 ## 加入列表里选中的那个房间。
@@ -152,6 +179,21 @@ func _on_direct_pressed() -> void:
 	if port <= 0:
 		return
 	_begin_join(address, port)
+
+
+## 切换公开类型。只改状态与那行说明，不发信号——发信号是点「创建房间」时的事。
+func _set_room_kind(kind: int) -> void:
+	_room_kind = kind
+	_refresh_kind_hint()
+
+
+## 类型说明。两个选项各有一句“选了会怎么样”，而不是只给一个名字：
+## “公网/局域网”对不熟悉网络的人来说不是自明的，尤其是跨网时能不能连上这件事。
+func _refresh_kind_hint() -> void:
+	if _room_kind == Lobby.Kind.PUBLIC:
+		_kind_hint.text = "公网 · 房间开在官方服务器上，跨网也能加入。服务端支持尚未接入（见 docs/公网房间方案.md），当前版本请选「局域网」。"
+	else:
+		_kind_hint.text = "局域网 · 房间开在本机，同一局域网里的人在左侧列表里就能看到它。"
 
 
 func _begin_join(address: String, port: int) -> void:
@@ -178,6 +220,7 @@ func _on_rooms_changed(listed: Array) -> void:
 		# 这一行会触发 item_selected，_selected 在那里被写入。
 		_rooms.select(reselect)
 	_update_join_enabled()
+	_empty_hint.visible = _lan_count() == 0
 	if _busy:
 		# 连接进行中：状态栏留给"正在连接…"，不被列表刷新覆盖。
 		return
@@ -248,6 +291,33 @@ func _on_room_selected(index: int) -> void:
 	var room = _rooms.get_item_metadata(index)
 	_selected = room if room is Dictionary else {}
 	_update_join_enabled()
+
+
+## 列表空着时的那句说明。它叠在列表上方（ItemList 没有占位文案这个能力），
+## 只在一间局域网房间都没探测到时显示——那时列表里只剩官方房间那一行，
+## 下面是一大片黑，看起来像功能坏了。
+func _build_empty_hint() -> void:
+	_empty_hint = Label.new()
+	_empty_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_empty_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_empty_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_empty_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_empty_hint.add_theme_color_override("font_color", GameTheme.TEXT_DIM)
+	_empty_hint.add_theme_font_size_override("font_size", GameTheme.FONT_LABEL)
+	_empty_hint.text = "还没探测到局域网房间。\n在右边「开一局」自己创建一个，或者选中列表里的官方房间加入。"
+	_rooms.add_child(_empty_hint)
+	_empty_hint.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_empty_hint.visible = false
+
+
+## 探测到的房间数量（不含固定条目）。
+func _lan_count() -> int:
+	var count := 0
+	for index in _rooms.item_count:
+		var meta = _rooms.get_item_metadata(index)
+		if meta is Dictionary and not bool((meta as Dictionary).get("official", false)):
+			count += 1
+	return count
 
 
 func _on_room_activated(index: int) -> void:

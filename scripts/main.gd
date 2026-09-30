@@ -23,6 +23,7 @@ extends Node2D
 const MODE_SETTING := "display/window/size/mode"
 const PLAYER_SCENE := preload("res://scenes/player.tscn")
 const MENU_SCENE := preload("res://scenes/menu.tscn")
+const LOBBY_SCENE := preload("res://scenes/lobby.tscn")
 ## 生成位置沿地面横向等距错开。槽位由服务端分配，因此不会出现两人重叠在同一个点。
 ## 关卡自己有 spawn_points 时以它为准（正常情况一律如此），这几个常量只是
 ## 关卡还没载入时的兜底——那种情况只可能出现在单独启动 scenes/main.tscn 调试的时候。
@@ -49,6 +50,17 @@ var _element_override: int = -1
 ## 而广播要一直持续到对局结束（别人随时可能打开界面找房间）。
 var _menu: MainMenu = null
 var _discovery: LanDiscovery = null
+## 等待房间。它只在**界面路径**上出现（命令行 --host/--join 仍是「连上即开局」）。
+var _lobby: Lobby = null
+## 本局是否已经开始。开局之前不生成任何角色：大厅只报「谁在房间里」，场上没有人。
+##
+## 用「不生成」而不是「生成了但冻住」：后者要先处理冻结时的物理、死亡与技能，
+## 而大厅里这些东西全都没有意义；一个不存在的角色没有这些问题。
+var _game_started := false
+## 本次加入是否走大厅。join 的结果要等 _on_join_succeeded，因此先记一笔。
+var _via_lobby := false
+## 房间的公开类型（Lobby.Kind）。只用于显示，但它决定了以后房间开在哪里。
+var _room_kind: int = Lobby.Kind.LAN
 ## 本次房间的名字。主机侧用于广播，也显示在 HUD 上，便于口头告诉另一台机器上的人。
 var _room_name: String = ""
 ## 本次连接的 "地址:端口"，只用于提示文案。
@@ -92,6 +104,12 @@ func _build_menu() -> void:
 	add_child(_menu)
 	_menu.host_requested.connect(_on_menu_host_requested)
 	_menu.join_requested.connect(_on_menu_join_requested)
+	# 大厅也在这里建：它与菜单一样是「会话开始之前的一屏」，
+	# 由入口脚本持有才能在两屏之间传递状态（谁是房主、房间叫什么）。
+	_lobby = LOBBY_SCENE.instantiate() as Lobby
+	add_child(_lobby)
+	_lobby.start_requested.connect(_on_lobby_start_requested)
+	_lobby.leave_requested.connect(_on_lobby_leave_requested)
 	_discovery = LanDiscovery.new()
 	add_child(_discovery)
 
@@ -171,6 +189,8 @@ func _report_feel() -> void:
 ## 对局中这台相机不参与：角色的相机会在它自己的 _ready 里 make_current 抢过去。
 func _show_menu(port: int) -> void:
 	_hud.visible = false
+	# 回到菜单时大厅必须收起来：两屏同层且都不透明，留着会让菜单背后多一层。
+	_lobby.close()
 	_menu_camera.enabled = true
 	_menu_camera.make_current()
 	_menu.open(port)
@@ -182,11 +202,132 @@ func _leave_menu_for_game() -> void:
 	_hud.visible = true
 
 
+# ---------------------------------------------------------------- 等待房间
+
+## 显示等待房间。与菜单一样把镜头交给菜单相机：大厅背后是本关起点那一带的地形，
+## 半透明底色能透出它来，比一块纯色更像"游戏里的房间"。
+func _show_lobby() -> void:
+	_menu.close()
+	_hud.visible = false
+	_menu_camera.enabled = true
+	_menu_camera.make_current()
+	_lobby.open(Net.is_server())
+	_refresh_lobby()
+
+
+func _hide_lobby() -> void:
+	if _lobby != null:
+		_lobby.close()
+
+
+## 把本机的那份名单画出来。服务端与客户端走同一个函数，
+## 区别只在名单从哪来（本地构造 vs 收到的 RPC），因此两端的显示不会分叉。
+func _refresh_lobby() -> void:
+	if _lobby == null:
+		return
+	_lobby.apply(_with_local_flags(_lobby_info()))
+
+
+## 服务端把名单下发给各端。客户端不能自己推：槽位与元素只有服务端分配得出来。
+func _broadcast_lobby() -> void:
+	# 不在大厅里就不发。对局中重发名单没有接收方，而这条路径会被
+	# peer_connected/peer_disconnected 无条件调到，包括晚加入的时候。
+	if _lobby == null or not _lobby.visible:
+		return
+	_refresh_lobby()
+	if Net.is_server() and not multiplayer.get_peers().is_empty():
+		_rpc_lobby_info.rpc(_lobby_info())
+
+
+## 大厅要显示的内容。形状见 Lobby.apply 的说明。
+func _lobby_info() -> Dictionary:
+	var entries: Array = []
+	# 房主本人（peer 1）也是一个玩家。专用服务端不是玩家，但它不会走到这里
+	#（无头启动不开界面），因此 _room_name 与 _join_hint 在那边也不适用。
+	if not Net.is_dedicated():
+		entries.append(_lobby_entry(1))
+	for id in multiplayer.get_peers():
+		entries.append(_lobby_entry(id))
+	return {
+		"name": _room_name,
+		"kind": _room_kind,
+		"address": _join_hint(),
+		"players": entries,
+	}
+
+
+func _lobby_entry(id: int) -> Dictionary:
+	var slot := int(_slots.get(id, 0))
+	return {
+		"id": id,
+		"slot": slot,
+		"element": _element_for(slot),
+		"host": id == 1,
+		# 这里**不写 "you"**：它在各端是不同的，而这份字典是服务端构造后原样下发的，
+		# 写进去等于把房主的答案发给所有人（所有人都会看到自己那一行变成房主）。
+	}
+
+
+## 给名单补上"是不是本机"。这一步必须在**收到下发之后**做，不能放进 _lobby_entry。
+func _with_local_flags(info: Dictionary) -> Dictionary:
+	var local := Net.local_id()
+	var players: Array = []
+	for entry in info.get("players", []):
+		if not (entry is Dictionary):
+			continue
+		var item: Dictionary = (entry as Dictionary).duplicate()
+		item["you"] = int(item.get("id", 0)) == local
+		players.append(item)
+	var out := info.duplicate()
+	out["players"] = players
+	return out
+
+
+# ---------------------------------------------------------------- 开局
+
+func _on_lobby_start_requested() -> void:
+	# 只有房主能开局。界面已经把按钮置灰，这里再判一次：
+	# 开局是不可逆的动作（会生成角色、广播通知），值得再挡一道。
+	if not Net.is_server():
+		return
+	_start_game()
+
+
+func _on_lobby_leave_requested() -> void:
+	_return_to_menu("已离开房间，可以重新选择或自己创建。")
+
+
+## 从大厅进入对局。**服务端独有**，由房主那一次点击触发。
+##
+## 三步的顺序不能换：先生成角色、再通知客户端、最后切本机。
+## 否则两端会各自看到一瞬间的"已经进关了但场上没人"。
+func _start_game() -> void:
+	if _game_started or not Net.is_server():
+		return
+	_game_started = true
+	var ids := multiplayer.get_peers()
+	if not Net.is_dedicated():
+		_spawn_player(Net.local_id())
+	for id in ids:
+		_spawn_player(id)
+	if not ids.is_empty():
+		_rpc_game_started.rpc()
+	_hide_lobby()
+	_leave_menu_for_game()
+	_set_notice("对局开始。按 Esc 返回初始界面。")
+
+
 ## 创建房间：本机开始监听，并且（非专用服务端时）本机也是一个玩家。
 ## 界面上的"创建房间"、命令行的 `--host` 与无头启动都汇聚到这里，三条路径的行为不会有差别。
-func _host_game(room_name: String, port: int, dedicated: bool) -> void:
+##
+## `via_lobby` 决定开局时机，两条路径都是刻意保留的：
+##   界面创建（true）  —— 先停在大厅，人齐之后由房主点「开始游戏」。这是需求要的体验。
+##   命令行/无头（false）—— 连上即开局。专用服务端与 tools/net-smoke.mjs 都依赖它，
+##                          没人能点界面的场合下大厅没有意义（见 docs/公网房间方案.md 的 Q7）。
+func _host_game(room_name: String, port: int, dedicated: bool, via_lobby: bool = false) -> void:
 	_room_name = room_name if not room_name.is_empty() else LanDiscovery.default_room_name()
 	_port = port
+	_game_started = not via_lobby
 	if Net.host(_port, dedicated) != OK:
 		# 唯一可预期的失败是端口被占用（例如开发实例还开着同一个端口）。
 		# 有画面时回到界面让人换端口重试，无头时只能把原因写进日志。
@@ -196,6 +337,9 @@ func _host_game(room_name: String, port: int, dedicated: bool) -> void:
 		if DisplayServer.get_name() != "headless":
 			_show_menu(_port)
 			_menu.set_message(message)
+		return
+	if via_lobby:
+		_show_lobby()
 		return
 	_leave_menu_for_game()
 	# 主机自己也是一个玩家，除非本次是无头的专用服务端。
@@ -207,9 +351,11 @@ func _host_game(room_name: String, port: int, dedicated: bool) -> void:
 ## 连接远端主机。界面列表里选中的房间与手动填写的地址都由这里发起。
 ## 连接结果要等 Net.join_succeeded / join_failed，因此这里不切画面：
 ## 失败时界面还留在屏幕上，可以直接换一个房间重试。
-func _begin_join(address: String, port: int) -> void:
+func _begin_join(address: String, port: int, via_lobby: bool = false) -> void:
 	_join_target = "%s:%d" % [address, port]
 	_port = port
+	_via_lobby = via_lobby
+	_game_started = not via_lobby
 	_set_notice("正在连接 %s …" % _join_target)
 	if Net.join(address, port) != OK:
 		_on_join_failed()
@@ -225,6 +371,11 @@ func _return_to_menu(message: String) -> void:
 	_room_name = ""
 	_join_target = ""
 	_notice = ""
+	# 三个会话级标记都要回初始值。留着任何一个（例如 _game_started）会让下一局
+	# 在还没开局时就先生成角色，而那种状态看着像「大厅里有人站着」。
+	_game_started = false
+	_via_lobby = false
+	_room_kind = Lobby.Kind.LAN
 	if DisplayServer.get_name() == "headless":
 		# 无头运行时没有界面可回，停在"尚未开始会话"状态即可。
 		_refresh_status()
@@ -271,12 +422,13 @@ func _start_announcing() -> void:
 		print("[lan] 未能自动判断对外地址，跨网联机时请用 --advertise <地址或域名> 指定")
 
 
-func _on_menu_host_requested(room_name: String, port: int) -> void:
-	_host_game(room_name, port, false)
+func _on_menu_host_requested(room_name: String, port: int, kind: int) -> void:
+	_room_kind = kind
+	_host_game(room_name, port, false, true)
 
 
 func _on_menu_join_requested(address: String, port: int) -> void:
-	_begin_join(address, port)
+	_begin_join(address, port, true)
 
 
 ## 对局中按 Esc 回到初始界面。主机按下等于关掉房间，另一台机器会收到"与主机断开"。
@@ -330,10 +482,17 @@ func _on_peer_connected(id: int) -> void:
 	print("[session] peer %d 已连接" % id)
 	# 只有服务端负责生成角色，其余 peer 等生成包到达即可。
 	if Net.is_server():
-		_spawn_player(id)
-		# 排在这一句之后：先把人放到场上，再把他没见过的那部分世界（打掉的墙、
-		# 已经拿掉的积分……）补给他。见 Game.catch_up 的说明。
-		_game.on_peer_joined(id)
+		# 槽位在**连接的那一刻**就分配，而不是等到开局。理由是大厅要显示
+		# 「谁是熔、谁是霜」（元素由槽位推出来，见 _element_for）；
+		# 等到开局才分的话，大厅里只能显示一串没有意义的 peer 号。
+		_allocate_slot(id)
+		# 开局之后连进来的人才立刻生成，否则他就是大厅里的下一个人。
+		if _game_started:
+			_spawn_player(id)
+			# 排在这一句之后：先把人放到场上，再把他没见过的那部分世界（打掉的墙、
+			# 已经拿掉的积分……）补给他。见 Game.catch_up 的说明。
+			_game.on_peer_joined(id)
+	_broadcast_lobby()
 	_refresh_status()
 
 
@@ -346,6 +505,7 @@ func _on_peer_disconnected(id: int) -> void:
 		var player := _players.get_node_or_null(_peer_node_name(id))
 		if player != null:
 			player.queue_free()
+	_broadcast_lobby()
 	_refresh_status()
 
 
@@ -372,9 +532,17 @@ func _instantiate_player(data: Variant) -> Node:
 func _spawn_player(id: int) -> void:
 	if _players.has_node(_peer_node_name(id)):
 		return
-	var slot := _allocate_slot(id)
+	var slot := _slot_for(id)
 	_spawner.spawn({"id": id, "slot": slot, "element": _element_for(slot)})
 	print("[session] 生成玩家 %d（槽位 %d，%s）" % [id, slot, Element.kind_name(_element_for(slot))])
+
+
+## 取这个 peer 的槽位。大厅期间已经分配过，因此正常情况下这里只是读一次；
+## 命令行 `--host` 直接开局时没有大厅那一步，所以也要能补分配。
+func _slot_for(id: int) -> int:
+	if _slots.has(id):
+		return int(_slots[id])
+	return _allocate_slot(id)
 
 
 ## 槽位对应的元素。默认 0 号熔、1 号霜，与设计文档 3.1 的"两人一熔一霜"一致；
@@ -388,6 +556,10 @@ func _element_for(slot: int) -> int:
 
 ## 取当前未被占用的最小槽位。只在服务端调用，然后随生成参数告知各端。
 func _allocate_slot(id: int) -> int:
+	# 已经分配过就返回原值。重复分配会让同一个人在大厅里换一个元素，
+	# 而「他是熔还是霜」在大厅里已经显示出来了，中途变掉看起来像出了 bug。
+	if _slots.has(id):
+		return int(_slots[id])
 	var taken: Dictionary = {}
 	for slot in _slots.values():
 		taken[slot] = true
@@ -408,10 +580,12 @@ func _slot_position(slot: int) -> Vector2:
 	return Vector2(offset, SPAWN_HEIGHT)
 
 
-## 初始界面是不是开着。Game 用它决定收不收对局内的按键——
-## 只有入口脚本知道界面在不在（界面是它建的），所以由这里回答，而不是让 Game 去翻菜单。
+## 初始界面或等待房间是不是开着。Game 用它决定收不收对局内的按键——
+## 两屏都处于「会话尚未开局」的状态，对局输入在它们上面都没有意义。
+## 只有入口脚本知道界面在不在（两屏都是它建的），所以由这里回答，
+## 而不是让 Game 去翻菜单与大厅。
 func is_menu_open() -> bool:
-	return _menu != null and _menu.visible
+	return (_menu != null and _menu.visible) or (_lobby != null and _lobby.visible)
 
 
 func _peer_node_name(id: int) -> String:
@@ -522,6 +696,31 @@ func _report_player(player: Player) -> void:
 	])
 
 
+## 开局通知。`call_remote` 是必须的：不带它时 rpc() 会不会在本地也执行一遍
+## 取决于同步模式，而「主机自己进了两次对局」这类现象只在有第二台机器时才出现。
+## 本机那一次由 _start_game() 显式调用，因此这里只负责远端。
+##
+## 挂在入口脚本上（路径 /root/Main）是安全的：它在各端都存在且路径固定，
+## 与 Game 挂在 /root/Main/Game 同理。对比 Player——它由 MultiplayerSpawner 生成，
+## 路径里带 peer id，路径一旦对不上 RPC 会**静默失败**，查起来极贵。
+@rpc("authority", "call_remote", "reliable")
+func _rpc_game_started() -> void:
+	_game_started = true
+	_hide_lobby()
+	_leave_menu_for_game()
+	_set_notice("对局开始。按 Esc 返回初始界面。")
+
+
+## 名单下发。每次有人进出都重发一份完整的，而不是发增量：
+## 大厅最多四个人，一份名单几十字节；增量省下的流量远小于
+## 「两端各持一份名单、其中一份落后了」这种 bug 的代价。
+@rpc("authority", "call_remote", "reliable")
+func _rpc_lobby_info(info: Dictionary) -> void:
+	if _lobby == null:
+		return
+	_lobby.apply(_with_local_flags(info))
+
+
 # ---------------------------------------------------------------- 状态显示
 
 func _on_hosting_started(p_port: int) -> void:
@@ -537,6 +736,11 @@ func _listen_label() -> String:
 
 func _on_join_succeeded() -> void:
 	print("[session] 已连接到主机")
+	if _via_lobby:
+		# 只把界面切过去，名单与房间信息等主机下发（槽位与元素只有服务端分配得出来）。
+		_show_lobby()
+		_lobby.set_message("已进入房间，等待房主开始游戏。")
+		return
 	_leave_menu_for_game()
 	_set_notice("已连接到主机，等待服务端生成本机角色。按 Esc 返回初始界面。")
 
