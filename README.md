@@ -77,24 +77,33 @@ node tools/net-smoke.mjs
 ```powershell
 # 使用前先做一次：在 ~/.ssh/config 里加 Host moltenfrost（公网地址不入库，见 docs/服务端部署.md 第五节）
 
-# 完整部署（首次，或销毁重建之后），开两间房
-node tools/deploy-server.mjs --host moltenfrost --advertise <域名> --directory --rooms-count 2 --enable-service
+# 完整部署（首次，或销毁重建之后）
+node tools/deploy-server.mjs --host moltenfrost --advertise <域名> --directory --enable-service
 
 # 只更新代码
 node tools/deploy-server.mjs --host moltenfrost --advertise <域名> --skip-godot
 ```
 
-服务器上跑的是**同一份工程源码**（服务器只需要 Godot 的 Linux 二进制与仓库），
-外加一个**房间目录**（`tools/room-directory.py`，只用 Python 标准库）。
-每间房是一个 systemd 模板实例（`moltenfrost@40001`、`@40002`…），它们自己向目录登记，
-玩家在界面里拉的就是这份目录。
+服务器上跑的是**同一份工程源码**（服务器只需要 Godot 的 Linux 二进制与仓库），外加两样：
+
+| 组件 | 作用 |
+| --- | --- |
+| `moltenfrost-directory`（`tools/room-directory.py`，只用 Python 标准库） | 房间目录：房间向它登记，玩家向它拉列表、向它**认领**一间空房 |
+| `moltenfrost-pool`（`tools/room-pool.py`） | 房间池：让房间里**恒有「有人在玩的 + 1 间备用」**，按需拉起与收掉 Godot 子进程 |
+
+**房间不是预开的**：没人玩时只有 1 间空房备着，而它**不出现在任何人的列表里**。
+玩家点「创建公网房间」= 向目录认领那间空房，它随后才出现在别人的列表里；
+人走光之后池把多出来的收掉。因此打开游戏看到的列表是空的（或只有别人正在玩的房间）。
+
+想多留几间备用、或放宽上限，改池的参数（`--spare` / `--max-rooms`），
+**不要再手工 `systemctl start moltenfrost@<端口>`**——那套模板单元已经不存在了。
 
 官方服务器的地址与目录端口在 **`config/product.cfg`**，换域名只改那一个文件
 （改完重启即生效，启动日志里 `[config]` 行会打出生效值与它的来源）。
 
-**安全组要两条**：`TCP:27017`（目录）与 `UDP:40001-40020`（房间）。
-缺一个都是"连不上"，但现象不同：目录没放行 → 列表拉不到；房间段没放行 → 列表里有房间但点进去超时。
-这在本地测不出来，因为本机走环回不受安全组影响。
+**安全组要两条**：`TCP:27017`（目录）与 `UDP:40001-40020`（房间段，要覆盖整段而不是某几个号，
+因为池会换端口）。缺一个都是"连不上"，但现象不同：目录没放行 → 列表拉不到；
+房间段没放行 → 列表里有房间但点进去超时。这在本地测不出来，因为本机走环回不受安全组影响。
 
 坑与取舍写在 `docs/服务端部署.md`，其中两条最容易白花时间：**服务器访问不了 GitHub**
 （实测连不上，加速代理也全不通，所有东西必须从本机上传），以及
