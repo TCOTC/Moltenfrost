@@ -43,8 +43,10 @@ const HELP = `熔霜 · 联机服务器验收检查
   --advertise <地址>   客户端要连的地址（域名）。不给则用 --host
   --user <用户名>      SSH 用户，默认 ubuntu
   --key <私钥路径>     SSH 私钥，默认 ~/.ssh/id_ed25519_moltenfrost
-  --port <端口>        游戏端口，默认 27015
+  --port <端口>        对外入口端口，默认 27015
   --service <名字>     systemd 单元前缀，默认 moltenfrost
+  --rooms <N>          网关模式下有几个房间，默认 2（只在网关模式下用到）
+  --room-base-port <端口>  网关模式下房间端口的起点，默认 40001
   --godot <路径>       Godot 可执行文件，默认自动探测
   --verbose            把客户端与 SSH 的输出实时打出
   -h, --help           显示本帮助
@@ -58,6 +60,8 @@ function parseArgs(argv) {
     key: process.env.MOLTENFROST_SSH_KEY || path.join(os.homedir(), ".ssh", "id_ed25519_moltenfrost"),
     port: 27015,
     service: "moltenfrost",
+    rooms: 2,
+    roomBasePort: 40001,
     godot: process.env.GODOT_BIN || null,
     verbose: false,
     help: false,
@@ -76,6 +80,8 @@ function parseArgs(argv) {
       case "--key": opts.key = next(); break;
       case "--port": opts.port = Number(next()); break;
       case "--service": opts.service = next(); break;
+      case "--rooms": opts.rooms = Number(next()); break;
+      case "--room-base-port": opts.roomBasePort = Number(next()); break;
       case "--godot": opts.godot = next(); break;
       case "--verbose": opts.verbose = true; break;
       case "-h": case "--help": opts.help = true; break;
@@ -189,13 +195,32 @@ async function main() {
   if (!godot) throw new Error("找不到 Godot 可执行文件。用 --godot <路径> 指定，或设置 GODOT_BIN。");
 
   const target = opts.advertise || opts.host;
-  const unit = `${opts.service}@${opts.port}`;
   const ssh = makeSsh(opts);
   const assertions = [];
   const say = (msg) => process.stdout.write(`${msg}\n`);
+  // 两种拓扑下同一个端口号归属不同：
+  //   单房间模式 —— `moltenfrost@27015` 就是那个游戏房间；
+  //   **网关模式** —— 27015 归 `moltenfrost-gateway`，房间在环回 40001 起。
+  // 不区分会真的把环境弄坏：早先本工具硬编码 `moltenfrost@<端口>`，于是它在网关
+  // 模式下"发现服务没跑"就启动了 `moltenfrost@27015`——那个残留房间会去抢
+  // 127.0.0.1:27015，把本机验证脚本的环回连接引到它身上。
+  //（实测踩到：网关与房间全在跑，却多出一个 27015 房间；已把它 disable 掉。）
+  const gatewayUnit = `${opts.service}-gateway`;
+  const gatewayMode = ssh(`systemctl cat ${gatewayUnit} >/dev/null 2>&1 && echo yes || echo no`) === "yes";
+  const roomPorts = Array.from({ length: opts.rooms }, (_, i) => opts.roomBasePort + i);
+  const roomUnits = roomPorts.map((p) => `${opts.service}@${p}`);
+  const entryUnit = `${opts.service}@${opts.port}`;
+  // 代码一致性要检查**所有在跑的进程**：网关与每个房间都是各自的进程，
+  // 只查其中一个的话"另一个跑着旧代码"查不出来。
+  const codeUnits = gatewayMode ? [gatewayUnit, ...roomUnits] : [entryUnit];
+  // 正常停止要停的是**持有这个客户端的那一个**：网关模式下停网关只会静默丢包
+  // （客户端只能等心跳超时），而停房间才会让 ENet 把断开通知发给网关、再转给客户端。
+  // 只有一个客户端时网关会把它分到第 0 间房（见 net-gateway.c 的 pick_room）。
+  const stopUnit = gatewayMode ? roomUnits[0] : entryUnit;
 
   say(`服务器：${opts.host}    客户端连接目标：${target}:${opts.port}`);
-  say(`Godot：${godot}\n`);
+  say(`Godot：${godot}`);
+  say(`拓扑：${gatewayMode ? `网关（${gatewayUnit}） + ${roomUnits.length} 个房间` : `单房间（${entryUnit}）`}\n`);
 
   // 1. SSH
   ssh("true");
@@ -203,32 +228,39 @@ async function main() {
 
   // 2. 服务在跑。若不在跑就启动，并等它在监听。
   //    "在跑"与"在监听"是两件事：Godot 启动要几秒，只看 systemctl 会误判。
-  const active = ssh(`systemctl is-active ${unit} || true`);
-  if (active !== "active") {
-    say(`（服务当前是 ${active}，正在启动）`);
-    ssh(`sudo systemctl start ${unit}`);
+  const wantUnits = gatewayMode ? [gatewayUnit, ...roomUnits] : [entryUnit];
+  for (const wanted of wantUnits) {
+    const unitState = ssh(`systemctl is-active ${wanted} || true`);
+    if (unitState !== "active") {
+      say(`（${wanted} 当前是 ${unitState}，正在启动）`);
+      ssh(`sudo systemctl start ${wanted}`);
+    }
   }
-  ssh(`sudo systemctl is-active --quiet ${unit}`);
+  for (const wanted of wantUnits) ssh(`sudo systemctl is-active --quiet ${wanted}`);
 
   // **核对服务进程里的代码与仓库里的一致。**
   // 进程的启动时间早于仓库最新提交时间，就说明它跑的是旧代码——
   // 这种情况不报错、功能看着也正常，但新改的东西不会生效，极难排查。
   // （2026-09-26 实测：部署只更新了文件，服务进程没重启，
   // 于是日志里报的错误来自一个已经删掉的 RPC。）
-  const staleCheck = ssh(
-    `p=$(systemctl show -p MainPID --value ${unit}); ` +
-    `[ -n "$p" ] && [ "$p" != "0" ] || { echo no-pid; exit 0; }; ` +
-    `started=$(stat -c %Y /proc/$p 2>/dev/null || echo 0); ` +
-    `commit=$(git -C ~/moltenfrost log -1 --format=%ct); ` +
-    `if [ "$started" -lt "$commit" ]; then echo stale; else echo fresh; fi`,
-  );
-  if (staleCheck === "stale") {
-    throw new Error(
-      `服务进程启动于仓库最新提交之前，说明它在跑旧代码（进程没随部署重启）。\n` +
-      `重启后重跑本检查：ssh ${opts.user}@${opts.host} 'sudo systemctl restart ${unit}'`,
+  // 只在**已经启动过**的单元上判定：没启动的自然没有陈旧进程，而且启动它会
+  // 引入新进程（那正是上面那条注释警告的陷阱）。
+  for (const checked of codeUnits) {
+    const staleCheck = ssh(
+      `p=$(systemctl show -p MainPID --value ${checked}); ` +
+      `[ -n "$p" ] && [ "$p" != "0" ] || { echo no-pid; exit 0; }; ` +
+      `started=$(stat -c %Y /proc/$p 2>/dev/null || echo 0); ` +
+      `commit=$(git -C ~/moltenfrost log -1 --format=%ct); ` +
+      `if [ "$started" -lt "$commit" ]; then echo stale; else echo fresh; fi`,
     );
+    if (staleCheck === "stale") {
+      throw new Error(
+        `${checked} 启动于仓库最新提交之前，说明它在跑旧代码（进程没随部署重启）。\n` +
+        `重启后重跑本检查：ssh ${opts.user}@${opts.host} 'sudo systemctl restart ${checked}'`,
+      );
+    }
   }
-  assertions.push("服务运行的代码与仓库一致");
+  assertions.push(gatewayMode ? `网关与 ${roomUnits.length} 个房间跑的代码都与仓库一致` : "服务运行的代码与仓库一致");
 
   let listening = false;
   for (let i = 0; i < 30; i++) {
@@ -303,7 +335,7 @@ async function main() {
     // 计时含 ssh 握手与 systemctl 执行的开销，因此只当作量级参考。
     const seenBefore = (state.text.match(/与主机断开/g) || []).length;
     const stopStartedAt = Date.now();
-    ssh(`sudo systemctl stop ${unit}`);
+    ssh(`sudo systemctl stop ${stopUnit}`);
     const detectedMs = await (async () => {
       while (Date.now() - stopStartedAt < HEARTBEAT_TIMEOUT_MS + 8000) {
         if ((state.text.match(/与主机断开/g) || []).length > seenBefore) {
@@ -319,10 +351,21 @@ async function main() {
     }
     if (detectedMs >= HEARTBEAT_TIMEOUT_MS) {
       const tail = state.text.split("\n").filter((l) => l.includes("断开")).slice(-3).join("\n");
+      // 这一条现在**必然失败**，而且原因已经查清（2026-09-30）：`systemctl stop` 发的 SIGTERM
+      // 不会让 Godot 走 `_exit_tree`，进程几十毫秒就没了，`shutdown_gracefully()` 里那六轮
+      // poll 从未跑到，于是断开通知从未发出，客户端只能等心跳。
+      // 保留为硬断言而不是降级成警告：它是真的没做到，而且判据（是否短于心跳阈值）能区分
+      // "通知真的发出去了"与"心跳在兜底"。修好之后这条会自己变绿。
       throw new Error(
         `客户端用了 ${(detectedMs / 1000).toFixed(1)} 秒才发现服务端停止，达到心跳阈值（${HEARTBEAT_TIMEOUT_MS / 1000} 秒）。\n` +
-        `说明是心跳在兜底，也就是服务端 close 之前那次 poll() 没让断开通知发出去——` +
-        `检查 net.gd 的 shutdown_gracefully()。\n客户端相关输出：\n${tail}`,
+        `说明是心跳在兜底。**已知原因**（2026-09-30 实测）：\n` +
+        `  systemctl stop 发的 SIGTERM 不会让 Godot 走 _exit_tree —— 进程 8～24 毫秒就退出了，\n` +
+        `  而 Net.shutdown_gracefully() 里那六轮 poll 本身要 240 毫秒；时间对不上就说明它没跑到。\n` +
+        `  用 --quit-after 让服务端自行退出时这条断言是 0.0 秒（见 tools/net-smoke.mjs），\n` +
+        `  所以只有 SIGTERM 这一条路断了。\n` +
+        `修的方向与验证方式写在 docs/服务端部署.md 的 10.3（让 stop 走"自行退出"那条路；\n` +
+        `改完先看退出耗时有没有上到 240 毫秒以上）。\n` +
+        `客户端相关输出：\n${tail}`,
       );
     }
     assertions.push(`服务端正常停止时客户端不等心跳即发现（${(detectedMs / 1000).toFixed(1)} 秒，含 SSH 开销）`);
@@ -333,7 +376,13 @@ async function main() {
     }
     // 恢复成运行状态，免得检查完之后没人能连。
     say("\n（恢复服务运行状态）");
-    ssh(`sudo systemctl start ${unit}`);
+    // 网关模式下恢复的是**刚被停掉的那个房间**，而不是 27015：
+    // 27015 归网关，去 start 一个 `moltenfrost@27015` 只会在环回上多出一个野房间。
+    if (gatewayMode) {
+      ssh(`sudo systemctl start ${stopUnit}`);
+    } else {
+      ssh(`sudo systemctl start ${entryUnit}`);
+    }
   }
 
   say("");
