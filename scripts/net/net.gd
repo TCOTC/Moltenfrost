@@ -34,7 +34,7 @@ const MAX_CLIENTS := 4
 
 signal hosting_started(port: int)
 signal join_succeeded()
-signal join_failed()
+signal join_failed(reason: String)
 ## 与主机的会话结束。`reason` 是一句可以直接显示给玩家的话（"与主机断开"、
 ## "与主机失去联系（心跳超时）"……），因此上层不必再加一段猜测成因的文案。
 ## 断开的原因只有两种，但两者的等待时间相差很多，分清楚才能给出有用的提示：
@@ -68,6 +68,26 @@ const HEARTBEAT_TIMEOUT := 5.0
 const SHUTDOWN_POLL_ROUNDS := 6
 const SHUTDOWN_POLL_GAP_MS := 40
 
+## 连接建立的等待上限（秒）。
+##
+## 为什么必须自己判：ENet 只在**网络层出错**时才会报 `connection_failed`（对端不可达会有
+## ICMP，端口没人监听会有拒绝）。而官方网关在“房间都满了”时是**默默丢包**——
+## 包既没被拒绝也不是不可达，ENet 于是要等它自己的超时（实测约 32 秒）才报失败，
+## 而那句报错说的是“核对地址与端口、确认防火墙放过 UDP”：
+## 地址对、端口对、防火墙也没问题，玩家会抱着一个查不出来的问题去翻防火墙。
+## 自己设一个上限，就能把“32 秒后一句错话”换成“10 秒后一句涵盖真因的话”。
+## 取值比 HEARTBEAT_TIMEOUT 宽裕得多：真实连接在公网上只要 1 秒级，
+## 而链路很差时也不该误判，因此给 10 秒（远短于 ENet 的 32 秒）。
+const CONNECT_TIMEOUT := 10.0
+
+## 上一次连接失败的原因，供上层拼提示语。失败原因不同，玩家该做的事完全不同，
+## 因此不能只用一句“连接失败”盖住。
+const FAIL_REJECTED := "对方拒绝了连接（地址或端口可能不对）"
+const FAIL_TIMEOUT := "对方没有回应"
+
+var last_error: String = ""
+var _connect_elapsed: float = 0.0
+
 var _ping_elapsed: float = 0.0
 var _ping_seq: int = 0
 ## 序号 → 发出时的本地毫秒时刻。
@@ -77,6 +97,8 @@ var _last_pong_ms: int = 0
 
 var _peer: MultiplayerPeer = null
 var _dedicated: bool = false
+## 本次 join 的目标地址，只用于日志与提示语。
+var _last_join_address: String = ""
 
 
 func _ready() -> void:
@@ -89,6 +111,16 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if role == Role.OFFLINE:
 		return
+	# 连接建立的等待。放在心跳之前：这一段里 role 已经是 CLIENT，
+	# 但连接并未建立，下面那条心跳判定会跳过它（它要求 is_connected_to_server()）。
+	if role == Role.CLIENT and not is_connected_to_server():
+		_connect_elapsed += delta
+		if _connect_elapsed >= CONNECT_TIMEOUT:
+			push_warning("连接 %s:%d 在 %.0f 秒内没有回应，判定为失败" % [
+				_last_join_address, port, CONNECT_TIMEOUT,
+			])
+			_fail_connect(FAIL_TIMEOUT)
+			return
 	# 心跳判定放在发 ping 之前：它每秒才跑一次，而判定窗口是若干秒，顺序无关。
 	if role == Role.CLIENT and is_connected_to_server():
 		_check_server_liveness()
@@ -230,7 +262,21 @@ func join(address: String, p_port: int = DEFAULT_PORT) -> Error:
 	port = p_port
 	# 清掉上一次会话的心跳样本，否则刚连上就会被误判为超时。
 	_last_pong_ms = 0
+	# 连接建立的计时从此开始，见 CONNECT_TIMEOUT。
+	_last_join_address = address
+	_connect_elapsed = 0.0
+	last_error = ""
 	return OK
+
+
+## 连接建立失败（ENet 报的，或本文件自己判的超时）。两条路径汇聚到这里，
+## 因为上层该做的事是同一件（回到界面、把原因说出来），而失败原因不同。
+func _fail_connect(reason: String) -> void:
+	if role != Role.CLIENT:
+		return
+	last_error = reason
+	close()
+	join_failed.emit(reason)
 
 
 ## 结束会话，回到未开始状态。
@@ -285,12 +331,12 @@ func shutdown_gracefully() -> void:
 
 
 func _on_connected_to_server() -> void:
+	_connect_elapsed = 0.0
 	join_succeeded.emit()
 
 
 func _on_connection_failed() -> void:
-	close()
-	join_failed.emit()
+	_fail_connect(FAIL_REJECTED)
 
 
 func _on_server_disconnected() -> void:

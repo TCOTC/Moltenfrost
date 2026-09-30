@@ -13,7 +13,7 @@
 #   bash server-setup.sh --godot-zip /tmp/godot.zip --bundle /tmp/mf.bundle
 #                       [--port 27015] [--enable-service] [--skip-import]
 #                       [--gateway [--gateway-port 27015] [--room-base-port 40001]
-#                                 [--rooms-count 2]]
+#                                 [--rooms-count 2] [--max-per-room 2]]
 
 set -euo pipefail
 
@@ -35,6 +35,10 @@ GATEWAY=0
 GATEWAY_PORT="27015"
 ROOM_BASE_PORT="40001"
 ROOM_COUNT="2"
+# 每房间人数上限。**默认 2 不是保守取值，是上限本身**：关卡只配了两个出生点
+#（scenes/levels/level_01.tscn 的 spawn_points），而 spawn_point() 在槽位越界时按取模回落，
+# 于是第 3 个人会与第 1 个人**重叠生成**。本作又是双人协作，所以 2 就是对的数。
+MAX_PER_ROOM="2"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --gateway-port) GATEWAY_PORT="$2"; shift 2 ;;
     --room-base-port) ROOM_BASE_PORT="$2"; shift 2 ;;
     --rooms-count) ROOM_COUNT="$2"; shift 2 ;;
+    --max-per-room) MAX_PER_ROOM="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -261,10 +266,16 @@ RestartSec=2
 # Godot 收到 SIGTERM 后会走正常的退出流程，main.gd 的 _exit_tree 因此能跑到、
 # 可以由服务端主动向客户端发断开通知（客户端因此不必等超时）。实测 0.4 秒内完成。
 KillSignal=SIGTERM
-# 上限取 15 秒而不是默认的 90 秒：正常退出只要不到一秒，真卡住了也不该让
-# 关机/重启干等一分半。超时之后 systemd 会发 SIGKILL，此时客户端的
-# 心跳判定负责发现服务端下线。
-TimeoutStopSec=15
+# **停止前先请它自己退出。** Godot 收到 SIGTERM 是立刻退出、不走 _exit_tree，
+# 于是 Net.shutdown_gracefully() 那六轮 poll 从未跑到，断开通知也就发不出来，
+# 客户端只能等 5 秒心跳。这个脚本建一个哨兵文件并在脚本内等进程自己退出，
+# 等到就不发 SIGTERM，游戏因此能走正常退出、把通知发出去。
+# 等不到它只是退化成原来的行为，不会让停止变得不可靠。
+# 实测参考：正常退出耗时约 240 毫秒（poll 六轮×40 毫秒）。
+ExecStop=${REPO_DIR}/tools/graceful-stop.sh %i 8
+# 上限取 25 秒：ExecStop 最多等 8 秒，加上正常退出的 240 毫秒与余量。
+# 正常退出只要不到一秒，真卡住了也不该让关机/重启干等一分半——默认是 90 秒。
+TimeoutStopSec=25
 # 日志走 journald，用 journalctl -u moltenfrost@40001 -f 看。
 StandardOutput=journal
 StandardError=journal
@@ -272,6 +283,9 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
+  if [[ ! -x "$REPO_DIR/tools/graceful-stop.sh" ]]; then
+    chmod +x "$REPO_DIR/tools/graceful-stop.sh"
+  fi
   echo "installed ${SERVICE_NAME}@.service"
 
   # ------------------------------------------------------------ 网关
@@ -297,7 +311,7 @@ Wants=network-online.target
 Type=simple
 User=${USER}
 WorkingDirectory=${REPO_DIR}
-ExecStart=${REPO_DIR}/build/net-gateway --listen ${GATEWAY_PORT} --rooms ${room_list} --stats 60
+ExecStart=${REPO_DIR}/build/net-gateway --listen ${GATEWAY_PORT} --rooms ${room_list} --max-per-room ${MAX_PER_ROOM} --stats 60
 Restart=always
 RestartSec=2
 KillSignal=SIGTERM

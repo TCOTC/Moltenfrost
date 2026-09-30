@@ -39,6 +39,11 @@ const STATS_INTERVAL := 2.0
 ## 不传时按槽位交替分配（0 号熔、1 号霜），与设计文档「两人一熔一霜」的默认一致。
 var _element_override: int = -1
 
+## sentinel 的检查间隔（秒）。
+## 不做每帧检查：它是一次文件系统 stat，而这里要的只是"一两百毫秒内响应"——
+## 每帧查一次换来的是无谓的系统调用（无头服务端会跑满帧率）。
+const STOP_FILE_INTERVAL := 0.2
+
 @onready var _players: Node2D = $Players
 @onready var _spawner: MultiplayerSpawner = $Players/Spawner
 @onready var _hud: GameHud = $HUD
@@ -80,6 +85,8 @@ var _slots: Dictionary = {}
 var _join_order: Array[int] = []
 var _stats_enabled: bool = false
 var _stats_elapsed: float = 0.0
+## 哨兵文件的检查节流，见 _check_stop_file。
+var _stop_file_elapsed: float = 0.0
 ## 本区间内的帧时范围。帧时本身跳动大，说明画面在抖，而不是远端角色的位置在停。
 var _frame_min_ms: float = 0.0
 var _frame_max_ms: float = 0.0
@@ -447,7 +454,7 @@ func _begin_join(address: String, port: int, via_lobby: bool = false) -> void:
 	_game_started = not via_lobby
 	_set_notice("正在连接 %s …" % _join_target)
 	if Net.join(address, port) != OK:
-		_on_join_failed()
+		_on_join_failed(Net.FAIL_REJECTED)
 
 
 ## 结束当前会话并回到初始界面。
@@ -762,6 +769,7 @@ func _peer_node_name(id: int) -> String:
 ##   缓冲 远大于目标 → 滞后偏大，钟速会把它消耗掉
 ##   重复 高 → 发送方位置变化比快照发送慢（物理帧率低于网络帧率），已自动处理
 func _process(delta: float) -> void:
+	_check_stop_file(delta)
 	if not _stats_enabled:
 		return
 	var frame_ms := delta * 1000.0
@@ -911,15 +919,29 @@ func _on_join_succeeded() -> void:
 	_set_notice("已连接到主机，等待服务端生成本机角色。按 Esc 返回初始界面。")
 
 
-func _on_join_failed() -> void:
-	print("[session] 连接失败")
-	var message := "连接 %s 失败。核对地址与端口，并确认主机侧防火墙放行了该 UDP 端口。" % _join_target
+func _on_join_failed(reason: String) -> void:
+	print("[session] 连接失败：%s" % reason)
+	var message := _join_failed_message(reason)
 	_set_notice(message)
 	if DisplayServer.get_name() == "headless":
 		return
 	# 回到初始界面，保留已填的地址便于改一个数字重试。
 	_show_menu(_port)
 	_menu.set_message(message)
+
+
+## 连接失败时该说什么。分成三种，因为玩家该做的事完全不同：
+##   被拒绝（有明确的拒绝包）  —— 地址或端口不对
+##   没有回应（我们自己判的超时） —— 可能是对方不在，**也可能是官方房间都满了**
+##   其他    —— 给一条通用的排查路径
+## 之前只有最后那句“核对地址与端口、确认防火墙放过 UDP”，
+## 而“官方房间满了”时地址对、端口对、防火墙也没问题，玩家会去查一个不存在的问题。
+func _join_failed_message(reason: String) -> String:
+	if reason == Net.FAIL_TIMEOUT and _via_lobby and _room_kind == Lobby.Kind.PUBLIC:
+		return "连接 %s 没有回应。可能是官方房间都满了（每个房间只坐两个人），过一会儿再试；也可能是服务器暂时不可达。" % _join_target
+	if reason == Net.FAIL_TIMEOUT:
+		return "连接 %s 超时，对方没有回应。核对地址与端口，并确认主机侧防火墙放行了该 UDP 端口。" % _join_target
+	return "连接 %s 失败：%s。核对地址与端口，并确认主机侧防火墙放行了该 UDP 端口。" % [_join_target, reason]
 
 
 func _on_server_left(reason: String) -> void:
@@ -984,6 +1006,47 @@ func _describe_peers() -> String:
 func _exit_tree() -> void:
 	if Net.role != Net.Role.OFFLINE:
 		Net.shutdown_gracefully()
+
+
+# ---------------------------------------------------------------- 优雅停止
+
+## 看有没有人请我们退出。**这是让 `systemctl stop` 也能立刻通知客户端的办法。**
+##
+## 背景：Godot 收到 SIGTERM 是立刻退出，**不走 `_exit_tree`**（2026-09-30 实测：
+## 进程 8～24 毫秒就没了，而 shutdown_gracefully() 那六轮 poll 本身要 240 毫秒）。
+## 于是 `systemctl stop` 时断开通知从未发出，客户端只能等 5 秒心跳，
+## 看到的是"与主机失去联系"而不是"与主机断开"。
+## 而部署时的重启、控制台关机走的都是 SIGTERM，所以这条路不能不管。
+##
+## 做法：单元的 `ExecStop` 先建一个哨兵文件，再**在脚本里**等进程自己退出。
+## 等到就不发 SIGTERM，于是走到这里 → `get_tree().quit()` → 正常退出 →
+## `_exit_tree` 跑到 → 通知送达。等待放在 ExecStop 里（而不是靠 systemd 的
+## TimeoutStopSec），因为 systemd 在 ExecStop 返回之后就会发 SIGTERM，
+## 而那时游戏还没反应过来。
+##
+## 只在**固定端口**上启用：`--port 0`（自检用）拿不到可预测的文件名，
+## 而服务端进程没有被 stop 的需要。
+func _check_stop_file(delta: float) -> void:
+	if _port <= 0 or DisplayServer.get_name() != "headless":
+		return
+	_stop_file_elapsed += delta
+	if _stop_file_elapsed < STOP_FILE_INTERVAL:
+		return
+	_stop_file_elapsed = 0.0
+	if FileAccess.file_exists(stop_file_path()):
+		print("[session] 收到停止请求（%s），走正常退出以便通知客户端" % stop_file_path())
+		get_tree().quit()
+
+
+## 哨兵文件的路径。**这个拼法必须与 tools/graceful-stop.sh 一致**——
+## 两边各写一份是刻意的：它们分别位于 GDScript 与 shell 里，没有办法共用一份常量。
+## 改这里就要改那边，否则停止会静默退化回"客户端多等 5 秒"（不报错，只是变慢）。
+static func stop_file_path_for(port: int) -> String:
+	return "/tmp/moltenfrost-stop-%d" % port
+
+
+func stop_file_path() -> String:
+	return stop_file_path_for(_port)
 
 
 func _ensure_window_mode() -> void:

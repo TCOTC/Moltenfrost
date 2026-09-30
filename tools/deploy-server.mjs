@@ -47,6 +47,8 @@ const HELP = `熔霜 · 部署到联机服务器
   --gateway            公网房间模式：编译并安装 UDP 网关。对外只开 --port 一个 UDP 端口，
                        房间实例绑环回、跑在 --room-base-port 起的连续端口上（见 docs/公网房间方案.md）
   --rooms-count <N>    网关托管几个房间，默认 2
+  --max-per-room <N>   每个房间容纳几个玩家，默认 2。**不要改大**：关卡只配了两个出生点，
+                       多出来的人会与第一个人重叠生成（见 scenes/levels/level_01.tscn）
   --room-base-port <端口>  房间端口的起点，默认 40001。**不要用 27016**，那是局域网探测端口
   --skip-godot         跳过 Godot 的下载与安装（服务器上已有时用）
   --skip-import        跳过资源导入（仅调试脚本时用，正常部署不要加）
@@ -65,6 +67,7 @@ function parseArgs(argv) {
     enableService: false,
     gateway: false,
     roomsCount: 2,
+    maxPerRoom: 2,
     roomBasePort: 40001,
     skipGodot: false,
     skipImport: false,
@@ -88,6 +91,7 @@ function parseArgs(argv) {
       case "--enable-service": opts.enableService = true; break;
       case "--gateway": opts.gateway = true; break;
       case "--rooms-count": opts.roomsCount = Number(next()); break;
+      case "--max-per-room": opts.maxPerRoom = Number(next()); break;
       case "--room-base-port": opts.roomBasePort = Number(next()); break;
       case "--skip-godot": opts.skipGodot = true; break;
       case "--skip-import": opts.skipImport = true; break;
@@ -268,6 +272,7 @@ async function main() {
   if (opts.advertise) remoteArgs.push("--advertise", opts.advertise);
   if (opts.gateway) {
     remoteArgs.push("--gateway", "--rooms-count", String(opts.roomsCount),
+      "--max-per-room", String(opts.maxPerRoom),
       "--room-base-port", String(opts.roomBasePort));
   }
   if (!opts.skipGodot) remoteArgs.push("--godot-zip", "/tmp/godot-linux.zip");

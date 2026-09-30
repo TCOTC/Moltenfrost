@@ -191,6 +191,25 @@ static void hash_erase(unsigned long long key) {
 
 /* ---------------------------------------------------------------- 流 */
 
+/* 每个房间最近一次**有包发出去**的时刻（单增秒）。只由返回方向更新：
+ * 那个方向才是"房间还活着"的证据，因为请求方向的包是客户端发的，房间死了也一样会有。 */
+static double g_room_last_out[MAX_ROOMS];
+
+/* 一个还有人却没往外发过包的房间，多久算坏。
+ *
+ * 为什么可以这么判：房间里只要有玩家，双方就在每秒交换心跳（Net 的 ping/pong，
+ * 服务端会回 pong），所以一个**有流却没出包**的房间只可能是卡住了或挂了。
+ * 阀值给得宽（5 秒 = 容忍连续几次心跳丢失），因为误判的代价是把人赶到别的房间，
+ * 比多等一会儿更撚。 */
+#define ROOM_DEAD_SECONDS 5.0
+
+/* 房间能不能接新人。没人在就不可断言它坏了（空闲房间本就不发包），因此视为可用。 */
+static int room_alive(int room) {
+	if (g_room_count[room] == 0)
+		return 1;
+	return (now_seconds() - g_room_last_out[room]) <= ROOM_DEAD_SECONDS;
+}
+
 /* 选一个房间给新客户端。**挑「人最多且还有空位」的那一间，而不是「人最少」的。**
  *
  * 这一点写成函数是为了不让它变成一句容易改错的表达式，因为“人最少”听着更自然、
@@ -200,13 +219,18 @@ static void hash_erase(unsigned long long key) {
  * 本作是双人协作，所以第二个玩家必须被放进同一个房间；房间满了才开下一间。
  * 平局取下标最小的那间（保持结果可预期，便于排查）。
  *
- * 返回 -1 表示所有房间都满了，调用方丢弃这个流（对应“房间满了稍后再试”）。
- * 待办：房间进程挂掉时这里仍然会往里派流（不做探活），由它自己的 Restart=always 兜住。 */
+ * 返回 -1 表示所有房间都满了（或都不可用），调用方丢弃这个流。
+ *
+ * **坏房间会被跳过**（见 room_alive）。不做这一步的后果不是报错，而是更坏：
+ * 房间卡住时它的名额不会释放，后面来的人被派进去然后什么都不发生，
+ * 表现与"服务器没反应"一模一样，而重启房间能好——排错时很难想到是选房的问题。 */
 static int pick_room(void) {
 	int best = -1;
 	int best_count = -1;
 	for (int i = 0; i < g_room_total; i++) {
 		if (g_room_count[i] >= g_max_per_room)
+			continue;
+		if (!room_alive(i))
 			continue;
 		if (g_room_count[i] > best_count) {
 			best = i;
@@ -215,6 +239,8 @@ static int pick_room(void) {
 	}
 	return best;
 }
+
+/* ---------------------------------------------------------------- 流 */
 
 /* 返回流下标，失败返回 -1（房间满 / 流表满 / 建套接字失败）。 */
 static int flow_open(const struct sockaddr_in *client) {
@@ -394,6 +420,8 @@ static int drain_flow(int fd) {
 	if (kept != 0) {
 		batch_send(g_public_fd, &g_flows[index].client, keep, kept);
 		g_pkts_out += kept;
+		/* "这个房间还活着"的证据。只在这里更新，理由见 g_room_last_out。 */
+		g_room_last_out[g_flows[index].room] = now_seconds();
 	}
 	return n;
 }
@@ -403,8 +431,12 @@ static int drain_flow(int fd) {
 static void stats_line(void) {
 	char rooms[256];
 	int at = snprintf(rooms, sizeof(rooms), "rooms=");
-	for (int i = 0; i < g_room_total && at < (int)sizeof(rooms) - 8; i++)
-		at += snprintf(rooms + at, sizeof(rooms) - (size_t)at, "%s%d", i ? "/" : "", g_room_count[i]);
+	for (int i = 0; i < g_room_total && at < (int)sizeof(rooms) - 8; i++) {
+		/* 坏房间在上面标一个 !：选房会跳过它们，而"为什么这个房间不再收人"
+		 * 只能从这一行看出来（日志里没有别的痕迹）。 */
+		at += snprintf(rooms + at, sizeof(rooms) - (size_t)at, "%s%d%s",
+		               i ? "/" : "", g_room_count[i], room_alive(i) ? "" : "!");
+	}
 	printf("[gateway] flows=%d pkts_in=%ld pkts_out=%ld drops=%ld %s\n",
 	       live_flows(), g_pkts_in, g_pkts_out, g_drops, rooms);
 	fflush(stdout);
@@ -498,6 +530,10 @@ int main(int argc, char **argv) {
 		g_flows[i].used = 0;
 		g_free_slots[g_free_top++] = MAX_FLOWS - 1 - i;
 	}
+	/* 初始化成"刚出过包"。留 0 的话，第一个客户端被分到的那个空闲房间
+	 * 会被 room_alive() 当成坏的（0 秒 vs 现在的单增秒），于是谁都不进去。 */
+	for (int i = 0; i < MAX_ROOMS; i++)
+		g_room_last_out[i] = now_seconds();
 	batch_init();
 
 	int public_fd = socket(AF_INET, SOCK_DGRAM, 0);

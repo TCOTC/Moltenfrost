@@ -421,6 +421,85 @@ async function main() {
   });
   assertions.push(`会话可以重开且不残留角色（${sessionChecks} 项断言）`);
 
+  // 大厅流程：两人进同一间房 → 都看到 2 人 → 先到的那个是房主 →
+  // **房主请求开局 → 两端都进关且各生成一个角色**。
+  //
+  // 为什么要单独一项：`--host`/`--join` 走的都是"连上即开局"，上面那些双实例检查
+  // 因此全都盖不到"人齐才开局"这条路径。而它是需求的核心，接线时这一段一共暴露出
+  // 四个 bug（房主在客户端点了没反应、服务端从不下发名单、客户端自己造名单、
+  // RPC 路径不一致导致静默失败），每一个在日志上都表现为"什么也没发生"。
+  //
+  // 用本机房间 + 两个驱动器，不需要网关，因此任何平台都能跑。
+  // 网关那一层（逐流 NAT、房间拆分、best-fit 选房）要有 gcc 与 Linux，
+  // 仍由 tools/gateway-public-check.sh 在服务器上手工验，见 docs/公网房间方案.md。
+  await (async () => {
+    const lobbyPort = opts.port + 5;
+    const lobbyServer = launch(
+      godot,
+      [...base, "--host", "--port", String(lobbyPort), "--lobby"],
+      "大厅服务端",
+      opts,
+    );
+    const drivers = [];
+    try {
+      await waitFor(lobbyServer, "监听 UDP", timeoutMs);
+      // 驱动器就是"在无头环境里替真人点那个按钮"。两端跑同一个场景，
+      // 各自按自己的角色行事：房主在名单达到 2 人时请求开局，另一端什么都不做。
+      const driverArgs = (label) => [
+        "--headless", "--path", PROJECT_DIR, "res://tests/lobby_start_drive.tscn",
+        "--", "--join", "127.0.0.1", "--port", String(lobbyPort), "--lobby",
+      ];
+      const first = launch(godot, driverArgs(), "驱动器 1", opts);
+      drivers.push(first);
+      // 错开 4 秒再起第二个：两边同时连会让"谁先到"变得不确定，
+      // 而这项检查要断言的恰恰是"先到的那个成为房主"。
+      await new Promise((r) => setTimeout(r, 4000));
+      const second = launch(godot, driverArgs(), "驱动器 2", opts);
+      drivers.push(second);
+
+      // 驱动器自己会退出（通过 quit(0)/quit(1)），所以这里等的是退出而不是某个字符串。
+      const deadline = Date.now() + 60000;
+      while (drivers.some((d) => !d.exited) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      const stuck = drivers.filter((d) => !d.exited);
+      if (stuck.length > 0) {
+        throw new Error(
+          `${stuck.map((d) => d.label).join("、")}在 60 秒内没有退出，` +
+          `说明大厅流程卡住了（末 12 行）：\n${tail(stuck[0].text, 12)}`,
+        );
+      }
+      for (const driver of drivers) {
+        if (driver.exitCode !== 0) {
+          throw new Error(
+            `${driver.label}退出码 ${driver.exitCode}，说明它没走完大厅流程（末 15 行）：\n` +
+            tail(driver.text, 15),
+          );
+        }
+      }
+      // 两端的断言内容不同，因此分别查：
+      //   先到的那个必须是房主，且必须**由它**发出开局请求
+      //   另一端必须收到开局通知（只查房主那侧证明不了广播真的到了客户端）
+      if (!/我是房主/.test(first.text)) {
+        throw new Error(`先到的那个没有成为房主（末 12 行）：\n${tail(first.text, 12)}`);
+      }
+      if (!/请求开局/.test(first.text)) {
+        throw new Error(`房主没有请求开局（末 12 行）：\n${tail(first.text, 12)}`);
+      }
+      if (!/名单：2 人/.test(first.text)) {
+        throw new Error(
+          `先到的那一端没有看到 2 个人，两人可能被分到了不同房间（末 12 行）：\n` +
+          tail(first.text, 12),
+        );
+      }
+      assertions.push("大厅里两人同房、先到的成为房主并请求开局");
+      assertions.push("人齐后两端都进关，且各看到 2 个角色");
+    } finally {
+      for (const driver of drivers) stop(driver);
+      stop(lobbyServer);
+    }
+  })();
+
   const server = launch(
     godot,
     [...base, "--host", "--port", String(opts.port), "--element", "frost"],
