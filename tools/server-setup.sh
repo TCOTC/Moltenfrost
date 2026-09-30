@@ -365,32 +365,6 @@ EOF
 
   sudo systemctl daemon-reload
 
-  # **更新代码之后必须重启正在跑的服务。**
-  # 不重启的话进程里仍然是部署前那份代码，而磁盘上已经是新的——
-  # 这与"bundle 只含已提交内容"是同一类陷阱：改了、传了、看着都对，
-  # 但实际跑的不是那份代码。2026-09-26 就是这样白查了一轮：
-  # 服务端日志里报的错误来自一个已经删掉的 RPC，而 git 版本显示的是新代码。
-  # 只在服务已经在跑时重启；没跑就不要自作主张启动（部署与启动是两件事）。
-  #
-  # 目录模式下要重启的是**目录 + 房间池**：那个 27015 上的单房间服务
-  # 已经不是玩家的入口了（见下面的切换说明）。房间进程是池的子进程，
-  # 重启池就等于把它们全部换掉（池停时会逐间请它们自己退出）。
-  restart_list=()
-  if [[ "$DIRECTORY" == "1" ]]; then
-    restart_list+=("${SERVICE_NAME}-directory")
-    restart_list+=("${SERVICE_NAME}-pool")
-  else
-    restart_list+=("${SERVICE_NAME}@${PORT}")
-  fi
-  for unit in "${restart_list[@]}"; do
-    if systemctl is-active --quiet "$unit"; then
-      echo "restarting $unit to pick up the new code"
-      sudo systemctl restart "$unit"
-    else
-      echo "$unit is not running"
-    fi
-  done
-
   if [[ "$DIRECTORY" == "1" ]]; then
     echo
     echo "DIRECTORY MODE (route A: rooms are reached directly)."
@@ -417,12 +391,39 @@ EOF
   fi
 else
   say "6/6 systemd service skipped (--enable-service to install)"
-  if systemctl is-active --quiet "${SERVICE_NAME}@${PORT}" 2>/dev/null; then
-    echo "WARNING: ${SERVICE_NAME}@${PORT} is running but was NOT restarted,"
-    echo "         so it may still be running the previous code."
-    echo "         Restart it manually: sudo systemctl restart ${SERVICE_NAME}@${PORT}"
-  fi
 fi
+
+# **更新代码之后必须重启正在跑的服务。这一步与 --enable-service 无关。**
+# 不重启的话进程里仍然是部署前那份代码，而磁盘上已经是新的——
+# 这与"bundle 只含已提交内容"是同一类陷阱：改了、传了、看着都对，
+# 但实际跑的不是那份代码。
+#
+# 2026-09-26 踩过一次（服务端日志里报的错误来自一个已删掉的 RPC，而 git 上是新代码），
+# 2026-10-01 又踩了一次而且更隐蔽：那次**没有装单元、只更新代码**，而这一整段当时
+# 写在 `--enable-service` 分支里面 —— 于是房间池与它端着的备用房一直在跑旧代码。
+# 现象是玩家认领到的那间房报 `rpc node checksum failed`，而两端各自看都是新版本；
+# 服务器验收 6 项失败，人手动试玩时则表现为"改了但没生效"。
+# **因此这一段必须无条件执行。**
+#
+# 只在服务已经在跑时重启；没跑就不自作主张启动（部署与启动是两件事）。
+# 目录模式下要重启的是**目录 + 房间池**：那个 27015 上的单房间服务已经不是玩家的
+# 入口了（见上面的切换说明）。房间进程是池的子进程，重启池就等于把它们全部换掉
+#（池停时会逐间请它们自己退出，见 KillMode=control-group 的说明）。
+restart_list=()
+if [[ "$DIRECTORY" == "1" ]]; then
+  restart_list+=("${SERVICE_NAME}-directory")
+  restart_list+=("${SERVICE_NAME}-pool")
+else
+  restart_list+=("${SERVICE_NAME}@${PORT}")
+fi
+for unit in "${restart_list[@]}"; do
+  if systemctl is-active --quiet "$unit"; then
+    echo "restarting $unit to pick up the new code"
+    sudo systemctl restart "$unit"
+  else
+    echo "$unit is not running (nothing to restart)"
+  fi
+done
 
 say "done"
 echo "repo:   $REPO_DIR"
