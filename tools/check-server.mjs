@@ -40,7 +40,12 @@ const HELP = `熔霜 · 联机服务器验收检查
   node tools/check-server.mjs --host <地址> [选项]
 
   --host <地址>        服务器公网地址（SSH 用），必填
-  --advertise <地址>   客户端要连的地址（域名）。不给则用 --host
+  --advertise <地址>   客户端连**房间**用的地址（UDP，通常是域名）。不给则用 --host。
+  --directory-host <地址>  目录的 HTTP 地址。默认从 config/product.cfg 的 official_host 读，
+                       与客户端用的是同一个值。
+                       **两者刻意不同**：腾讯云会拦截发往未备案域名的 HTTP 请求
+                       （302 到 DNSPod 的封禁页），所以 HTTP 走 IP、而 UDP 用域名没问题。
+                       见 config/product.cfg 里的注释。
   --user <用户名>      SSH 用户，默认 ubuntu
   --key <私钥路径>     SSH 私钥，默认 ~/.ssh/id_ed25519_moltenfrost
   --port <端口>        单房间模式下的游戏端口，默认 27015
@@ -59,6 +64,7 @@ function parseArgs(argv) {
   const opts = {
     host: process.env.MOLTENFROST_HOST || null,
     advertise: null,
+    directoryHost: null,
     user: process.env.MOLTENFROST_SSH_USER || "ubuntu",
     key: process.env.MOLTENFROST_SSH_KEY || path.join(os.homedir(), ".ssh", "id_ed25519_moltenfrost"),
     port: 27015,
@@ -81,6 +87,7 @@ function parseArgs(argv) {
     switch (arg) {
       case "--host": opts.host = next(); break;
       case "--advertise": opts.advertise = next(); break;
+      case "--directory-host": opts.directoryHost = next(); break;
       case "--user": opts.user = next(); break;
       case "--key": opts.key = next(); break;
       case "--port": opts.port = Number(next()); break;
@@ -96,6 +103,23 @@ function parseArgs(argv) {
     }
   }
   return opts;
+}
+
+// 从 config/product.cfg 读一个 [network] 下的键。
+//
+// 与客户端读的是**同一个文件**（`scripts/product_config.gd` 也读它），因此这个检查
+// 用的地址就是玩家实际会用的那个——而不是检查脚本自己另编一个。
+// 格式很简单（`key="value"`，前面可能有注释），因此一个正则就够，不必引依赖。
+function readProductConfig(key, fallback) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(PROJECT_DIR, "config", "product.cfg"), "utf8");
+  } catch {
+    return fallback;
+  }
+  const match = raw.match(new RegExp(`^\\s*${key}\\s*=\\s*"?([^"\\r\\n]+?)"?\\s*$`, "m"));
+  const value = match ? match[1].trim() : "";
+  return value || fallback;
 }
 
 // 与 tools/net-smoke.mjs 里的同名函数一样：那边要能启动就好，这边同样只需要能启动。
@@ -186,7 +210,7 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 // 不断重试是因为刚部署完时池要几秒才能把第一间备用房拉起来，而目录此时会回答
 // `waiting`（不是错误，见 tools/room-directory.py 的 claim()）。
 async function claimRoom(opts) {
-  const url = `http://${opts.advertise || opts.host}:${opts.directoryPort}/rooms/claim`;
+  const url = `http://${opts.directoryHost}:${opts.directoryPort}/rooms/claim`;
   let last = "";
   const deadline = Date.now() + 60000;
   while (Date.now() < deadline) {
@@ -235,6 +259,9 @@ async function main() {
   if (!godot) throw new Error("找不到 Godot 可执行文件。用 --godot <路径> 指定，或设置 GODOT_BIN。");
 
   const target = opts.advertise || opts.host;
+  // 目录的 HTTP 地址与房间的 UDP 地址**刻意不同**（见 --directory-host 的帮助）。
+  opts.directoryPort = readProductConfig("official_directory_port", opts.directoryPort);
+  opts.directoryHost = opts.directoryHost || readProductConfig("official_host", target);
   const ssh = makeSsh(opts);
   const assertions = [];
   const say = (msg) => process.stdout.write(`${msg}\n`);
@@ -273,7 +300,8 @@ async function main() {
   // **停目录不行**：那不会断开任何已建立的连接，客户端只能等心跳超时。
   let stopUnit = entryUnit;
 
-  say(`服务器：${opts.host}    客户端连接目标：${target}`);
+  say(`服务器：${opts.host}    客户端连房间：${target}`);
+  say(`目录 HTTP：${opts.directoryHost}:${opts.directoryPort}（来自 config/product.cfg，与客户端同一个值）`);
   say(`Godot：${godot}`);
   say(`拓扑：${directoryMode
     ? (poolMode

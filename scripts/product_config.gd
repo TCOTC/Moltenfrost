@@ -21,7 +21,11 @@ const PATH := "res://config/product.cfg"
 
 ## 兜底值。与 config/product.cfg 中的取值保持一致；
 ## 不一致时以配置文件为准。改这里只是为了"文件丢了也能用"。
-const DEFAULT_OFFICIAL_HOST := "moltenfrost-server.mytemos.com"
+##
+## **这里是 IP 而不是域名**，理由见 config/product.cfg 的注释：腾讯云拦截发往
+## 未备案域名的 HTTP 请求（302 到 DNSPod 的封禁页），而目录走的是 HTTP。
+## 域名仍然用于 UDP（房间地址，由服务端的 --advertise 给出）。
+const DEFAULT_OFFICIAL_HOST := "106.52.118.93"
 ## 官方房间目录的端口（HTTP，TCP）。
 ## 路线 A 之后不再有"那一个官方房间"：房间是目录里的一列，各自带自己的 host:port，
 ## 因此这里只需要目录的端口（见 docs/公网房间方案.md）。

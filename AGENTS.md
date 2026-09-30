@@ -78,6 +78,12 @@ node tools/net-smoke.mjs
 node tools/pool-check.mjs
 ```
 
+**动了「创建公网房间」那条路径**（认领）再跑一条：它起一个真目录，再让真客户端**先起一个列表请求、紧接着认领**——这条覆盖的是"请求真的发出去了、回信真的到了"，而替身把这层跳过了（真机上就是在那里卡死的）。
+
+```powershell
+node tools/directory-client-check.mjs
+```
+
 **服务器上多一层东西**（目录 + 房间池，见 `docs/服务端部署.md`）时，端到端验收是另一条：
 
 ```bash

@@ -13,6 +13,10 @@ extends SceneTree
 ##   godot --headless --path . --script tests/directory_client_test.gd -- \
 ##         --base http://127.0.0.1:27123 --expect-port 40231
 ##
+## **也可以直接对着真服务器跑**（那时不给 `--expect-port`，因为池里哪一间空着是算出来的）：
+##   godot --headless --path . --script tests/directory_client_test.gd -- \
+##         --base http://moltenfrost-server.mytemos.com:27017
+##
 ## 退出码 0 表示全部通过。
 
 const DirectoryClientScript := preload("res://scripts/net/directory_client.gd")
@@ -33,6 +37,10 @@ var _probe = null
 
 var _claims: Array = []
 var _listed: Array = []
+## 探针**收到了响应**（哪怕是个空列表）。不能拿 `_listed.is_empty()` 当"收到了"：
+## 空列表是一个完全合法的响应（目录里现在真没人公开房间），把两者混为一谈
+## 会让这一步白等到超时——而且看起来像功能坏了。
+var _listed_any := false
 var _claim_port := 0
 var _stage := 0
 var _stage_elapsed := 0.0
@@ -80,8 +88,8 @@ func _process(delta: float) -> bool:
 # ---------------------------------------------------------------- 步骤
 
 func _setup() -> void:
-	if _base.is_empty() or _expect_port <= 0:
-		_fail("没有拿到 --base / --expect-port，检查 tools/directory-client-check.mjs 的调用")
+	if _base.is_empty():
+		_fail("没有拿到 --base，检查调用方式（见文件头）")
 		_finish()
 		return
 	_client = DirectoryClientScript.new()
@@ -100,7 +108,11 @@ func _wait_claim() -> void:
 	var result: Dictionary = _claims[0]
 	_ok(bool(result.get("ok", false)), "列表请求在飞时发起的认领也拿到了房间（实际 %s）" % result)
 	_claim_port = int(result.get("port", 0))
-	_ok(_claim_port == _expect_port, "拿到的应当是目录里那一间（期望 %d，实际 %d）" % [_expect_port, _claim_port])
+	if _expect_port > 0:
+		_ok(_claim_port == _expect_port, "拿到的应当是目录里那一间（期望 %d，实际 %d）" % [_expect_port, _claim_port])
+	else:
+		# 对着真服务器跑时不知道哪一间空着（池里那几间是算出来的），只查"拿到了一个端口"。
+		_ok(_claim_port > 0, "认领应当给出一个端口（实际 %d）" % _claim_port)
 	_next_stage()
 
 
@@ -113,7 +125,7 @@ func _probe_list() -> void:
 
 
 func _wait_list() -> void:
-	if _listed.is_empty():
+	if not _listed_any:
 		return
 	var ports: Array = []
 	for item in _listed:
@@ -149,6 +161,8 @@ func _on_claim_finished(result: Dictionary) -> void:
 
 func _on_rooms_fetched(rooms: Array) -> void:
 	_listed = rooms
+	_listed_any = true
+	print("[drive] 列表到手：%d 项 %s" % [rooms.size(), rooms])
 
 
 # ---------------------------------------------------------------- 断言与收尾

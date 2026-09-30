@@ -186,14 +186,21 @@ func _on_completed(result: int, code: int, _headers: PackedStringArray, body: Pa
 		"fetch":
 			var parsed = JSON.parse_string(text)
 			if not (parsed is Dictionary) or not ((parsed as Dictionary).get("rooms") is Array):
-				_finish("房间目录返回的内容看不懂")
+				# 把收到的字节数与开头一段带上：这一句在现场只说明"看不懂"，
+				# 而"看不懂"的原因可能是空正文、HTML 错误页、被截断的一段——
+				# 不带内容就只能靠加日志再跑一遍。
+				_finish("房间目录返回的内容看不懂（%d 字节：%s）" % [
+					body.size(), text.substr(0, 120),
+				])
 				return
 			_finish("")
 			rooms_fetched.emit((parsed as Dictionary)["rooms"] as Array)
 		"claim":
 			var claimed = JSON.parse_string(text)
 			if not (claimed is Dictionary):
-				_finish("房间目录返回的内容看不懂")
+				_finish("房间目录返回的内容看不懂（%d 字节：%s）" % [
+					body.size(), text.substr(0, 120),
+				])
 				return
 			# `waiting` 是成功的一次往返（HTTP 200），只是目录现在没有空房。
 			# 因此这里不走 _finish 的报错分支，否则日志里会多出一行不存在的错误。
