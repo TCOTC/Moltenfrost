@@ -84,6 +84,36 @@ sampler() { # $1=端口 $2=输出文件
 	done
 }
 
+# 采样文件里"这两个条件是否同时出现过"。输出两行：yes/no 与 name=.. state=..
+#
+# 抽成函数是因为它两处要用：等它的那个循环，以及最后的断言。两处用**同一段代码**，
+# 否则某天改了一处就会出现"循环等到了、断言却说没等到"。
+sample_verdict() { # $1=期望名字 $2=采样文件
+	python3 -c '
+import sys
+want=sys.argv[1]
+name_ok=state_ok=False
+for line in open(sys.argv[2], encoding="utf-8"):
+    parts=line.rstrip("\n").split("|")
+    if len(parts) != 3:
+        continue
+    name, state, _players=parts
+    if name == want:
+        name_ok=True
+    if state == "playing":
+        state_ok=True
+print("yes" if (name_ok and state_ok) else "no")
+print("name=%s state=%s" % (name_ok, state_ok))
+' "$1" "$2"
+}
+
+# 整局的最长等待（秒）。**只是个上限**：正常情况下十几秒就满足而提前继续。
+# 用轮询而不是固定 sleep：后者无论成败都要等满，而"改了脚本跑一遍"的次数
+# 远比"脚本真的坏了"多。可用 GAME_WAIT=n 覆盖。
+GAME_WAIT=${GAME_WAIT:-45}
+
+# 起一个客户端连进房间。它在自己的检查通过时会自己 `quit()`，因此收它之前要
+# 轮询日志（见下面的等待循环），不能固定等一个时长。
 join() { # $1=日志  $2..=拼在 `--` 之后的额外用户参数
 	local log="$1"; shift
 	# 注意场景名必须在 `--` **之前**，而 --rename 这类自定义参数必须在**之后**：
@@ -180,9 +210,23 @@ sampler "$ROOM_PORT" "$OUT/dir-samples.txt" &
 SAMPLER=$!
 
 FIRST=$(join "$OUT/first.log" "--rename=$NEW_NAME")
-sleep 4
+# 等先到的那个成为房主再起第二个。**轮询而不是固定 sleep**：正常一秒内就满足，
+# 而固定等待在两人几乎同时加入时反而会漏掉房主判定那一条（那一条才是不稳定的根因）。
+for _ in $(seq 1 10); do
+	grep -aq '我是房主' "$OUT/first.log" && break
+	sleep 1
+done
 SECOND=$(join "$OUT/second.log")
-sleep 38
+
+# 等两个客户端各自跑完自己的检查——它们通过时会自己 `quit()`，因此不能等固定时长：
+# 等太久等于白等，等太短则会在它们还没写完日志时就收掉它们。
+# 判据是各自那一行 `[drive] …：通过`。
+for _ in $(seq 1 "$GAME_WAIT"); do
+	if grep -aq '：通过' "$OUT/first.log" && grep -aq '：通过' "$OUT/second.log"; then
+		break
+	fi
+	sleep 1
+done
 
 kill_all "$FIRST" "$SECOND"
 kill "$SAMPLER" 2>/dev/null
@@ -191,23 +235,9 @@ wait "$SAMPLER" 2>/dev/null
 echo "  局的最后几秒，目录里那一项："
 tail -4 "$OUT/dir-samples.txt" | sed 's/^/    /'
 
-# **名字与状态都要看"曾经出现过"**，而不是看某一个时刻：这一项只在局中可见。
-played=$(python3 -c '
-import sys
-want=sys.argv[1]
-name_ok=state_ok=False
-for line in open(sys.argv[2], encoding="utf-8"):
-    parts=line.rstrip("\n").split("|")
-    if len(parts) != 3:
-        continue
-    name, state, _players=parts
-    if name == want:
-        name_ok=True
-    if state == "playing":
-        state_ok=True
-print("yes" if (name_ok and state_ok) else "no")
-print("name=%s state=%s" % (name_ok, state_ok))
-' "$NEW_NAME" "$OUT/dir-samples.txt")
+# 名字与状态那一条的判定。采样文件里已经存下了整局每一秒的样子，
+#   因此这里只读不算（上面那个循环已经用它等过了）。
+played=$(sample_verdict "$NEW_NAME" "$OUT/dir-samples.txt")
 lines=$(printf '%s\n' "$played")
 verdict=$(printf '%s' "$lines" | head -1)
 detail=$(printf '%s' "$lines" | tail -1)
@@ -246,41 +276,38 @@ else
 fi
 
 echo
-echo "=========== 5. 人走光后池收敛回「只剩备用」 ==========="
+echo "=========== 5. 人走光后池收缩回「忙碌数 + 备用数」 ==========="
 # 客户端被 kill 之后房间要等心跳超时才察觉（几秒），然后 players=0，
-# 再等认领的保留过期（最长 15 秒）才被当成空闲。
-# **这里只看汇总，不看某一号端口**：池会挑"端口最大的空闲房间"收掉，
-# 而刚走完一局的那一间恰好就是空闲且端口最大——它被收掉是正常的，
-# 换一个号继续当备用也是正常的。端口号会漂，安全组要覆盖整段才不受影响。
-for _ in $(seq 1 30); do
-	busy_now=$(listing_all | python3 -c '
+# 再等认领的保留过期（最长 15 秒）才开始算空闲。
+#
+# **这里要等到池真的收缩**，而不是只等"没有忙碌的房间"：后者会在池还端着
+# 两间房的时候就通过（实测过——断言写着"收敛"，实际池里是 2 间），
+# 而"省下不用的房间"正是这个池存在的理由之一，它值得一条真的断言。
+# 判据是 `总数 <= 忙碌 + spare`，spare 取部署时的默认值 1。
+for _ in $(seq 1 20); do
+	pub=$(listing)
+	busy=$(listing_all | python3 -c '
 import json,sys
-rooms=json.load(sys.stdin)["rooms"]
-print(sum(1 for r in rooms if r["busy"]))')
-	[ "$busy_now" = "0" ] && break
-	sleep 2
+print(sum(1 for r in json.load(sys.stdin)["rooms"] if r["busy"]))')
+	idle=$(listing_all | python3 -c '
+import json,sys
+print(sum(1 for r in json.load(sys.stdin)["rooms"] if not r["busy"]))')
+	if [ "$busy" = "0" ] && [ "$idle" -le 1 ]; then
+		break
+	fi
+	sleep 1
 done
-public_after=$(listing)
-busy_now=$(listing_all | python3 -c '
-import json,sys
-rooms=json.load(sys.stdin)["rooms"]
-print(sum(1 for r in rooms if r["busy"]))')
-total=$(listing_all | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["rooms"]))')
-idle=$(listing_all | python3 -c '
-import json,sys
-rooms=json.load(sys.stdin)["rooms"]
-print(sum(1 for r in rooms if not r["busy"]))')
-echo "  公开列表：$public_after"
-echo "  池里共 $total 间（忙碌 $busy_now 空闲 $idle）"
-if [ "$public_after" = '{"rooms": []}' ]; then
+echo "  公开列表：$pub"
+echo "  池里：忙碌 $busy 空闲 $idle（期望忙碌 0、空闲不超过 spare=1）"
+if [ "$pub" = '{"rooms": []}' ]; then
 	echo "OK: 没人之后公开列表又变空了（回到玩家打开界面看到的样子）"
 else
-	note_fail "没人之后公开列表里还有房间：$public_after（空房不该被列出来）"
+	note_fail "没人之后公开列表里还有房间：$pub（空房不该被列出来）"
 fi
-if [ "$busy_now" = "0" ] && [ "$idle" -ge 1 ]; then
-	echo "OK: 池收敛到只有备用房间（没有把玩过的房间堆着不放）"
+if [ "$busy" = "0" ] && [ "$idle" -ge 1 ] && [ "$idle" -le 1 ]; then
+	echo "OK: 池收缩到只剩备用那一间（没有把玩过的房间端着不放）"
 else
-	note_fail "池没有收敛：忙碌 $busy_now 空闲 $idle（看 journalctl -u moltenfrost-pool）"
+	note_fail "池没有收缩到位：忙碌 $busy 空闲 $idle（期望 0 / 1，看 journalctl -u moltenfrost-pool）"
 fi
 
 echo
@@ -288,6 +315,13 @@ if [ "$FAILS" = "0" ]; then
 	echo "路线 A 端到端验证通过。"
 else
 	echo "路线 A 端到端验证失败 $FAILS 项（上面带 FAIL 的行）。"
+fi
+# **额外一行纯 ASCII 的判定标记。** 中文结论经 SSH 回来可能是乱码，
+# 而"看不清结论 → 再跑一遍"是实测踩过的浪费（一次 355 秒）。
+if [ "$FAILS" = "0" ]; then
+	echo "ALL PASS"
+else
+	echo "FAIL ($FAILS)"
 fi
 echo "日志：$OUT"
 exit "$FAILS"

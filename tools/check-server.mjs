@@ -531,9 +531,13 @@ async function main() {
   say("");
   for (const line of assertions) say(`  ok  ${line}`);
   say("\n验收检查通过。");
+  // **额外一行纯 ASCII 的判定标记**：中文结论在 PowerShell 管道里会变成乱码，
+  // 而那会导致"看不清结果 → 再跑一遍"。
+  say(`ALL PASS (${assertions.length} checks)`);
 }
 
 main().catch((err) => {
   process.stderr.write(`\n验收检查失败：${err.message}\n`);
+  process.stderr.write(`FAIL (${err.message.split("\n")[0]})\n`);
   process.exitCode = 1;
 });

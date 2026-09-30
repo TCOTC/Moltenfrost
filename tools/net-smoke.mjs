@@ -628,8 +628,13 @@ async function main() {
     say("");
     for (const line of assertions) say(`  ok  ${line}`);
     say("\n冒烟测试通过。");
+    // **额外一行纯 ASCII 的判定标记。** 中文结论在 PowerShell 管道里会变成乱码，
+    // 实测因此出现过"跑完看不出结果、换一种读法再跑一遍"的重复执行（一次 110 秒）。
+    // 判定本身看退出码即可，但一行 ASCII 摘要让肉眼与脚本都能只认它。
+    say(`ALL PASS (${assertions.length} checks)`);
   } catch (err) {
     say(`\n冒烟测试失败：${err.message}\n`);
+    say(`FAIL (${err.message})`);
     say(`--- 服务端输出（末 30 行）---\n${tail(server.text)}`);
     if (client) say(`\n--- 客户端输出（末 30 行）---\n${tail(client.text)}`);
     process.exitCode = 1;

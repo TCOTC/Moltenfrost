@@ -50,7 +50,9 @@ if (!GODOT) {
 }
 
 const failures = [];
+let checks = 0;
 function ok(condition, label) {
+  checks++;
   console.log(`${condition ? "  ok  " : "  --  "} ${label}`);
   if (!condition) failures.push(label);
 }
@@ -199,5 +201,10 @@ try {
   }
 }
 
+// **额外一行纯 ASCII 的判定标记**：中文结论在 PowerShell 管道里会变成乱码，
+// 而那会导致"看不清结果 → 再跑一遍"（实测踩过，一次 110 秒）。判定本身看退出码。
 console.log(failures.length ? `房间池自检失败（${failures.length} 项）` : "房间池自检通过。");
+console.log(failures.length
+  ? `FAIL (${failures.length}): ${failures.join(" | ")}`
+  : `ALL PASS (${checks} checks)`);
 process.exit(failures.length ? 1 : 0);

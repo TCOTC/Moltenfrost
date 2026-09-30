@@ -62,39 +62,55 @@
 新增这类文件要同步加进两个预设的 `include_filter`，否则编辑器里一切正常而导出产物读不到
 （已实测，见 `memory/godot-notes.md`；`tools/pck-find.mjs` 可直接查产物里有没有）。
 
-## 交付前自检
+## 自检：分三层用，别一上来就跑全套
 
 ```powershell
-$godot = node tools/setup-dev-env.mjs --print-godot   # 路径来自 memory/local-env.json，见上「环境」
-& $godot --headless --path . --quit-after 3 -- --port 0
-node tools/net-smoke.mjs
+node tools/dev-check.mjs --only syntax   #  0.8s  改完 .gd 的第一件事
+node tools/dev-check.mjs                 #   10s  快层：语法 + 六个纯逻辑检查
+node tools/dev-check.mjs --full          #   70s  全套：再加联机冒烟、房间池、目录客户端
+node tools/dev-check.mjs --list          #         看有哪些项、各属哪一层
 ```
 
-在仓库根执行。控制台无脚本错误再交给人试玩。动了联机相关代码则两条都跑，第二条无头起一个服务端与一个客户端，核对连接、角色生成与插值取样，并顺带跑关卡判定几何与一关的规则（`tests/level_test.gd`、`tests/game_test.tscn`）；它还会跑一遍**大厅流程**（本地开房 + 两个无头驱动）与**房间目录的协议自检**。`--port 0` 让系统分配空闲端口：不带参数时会监听 27015，那个端口平时开着开发实例就占用了，自检会以"无法监听"的报错形式失败。手感、音量、数值这类偏好由人判断，不要替人定。
+| 场景 | 跑什么 | 耗时 |
+| --- | --- | --- |
+| 改完一个 `.gd` | `--only syntax`（脚本能不能解析） | 1 秒 |
+| 改了一批，还没提交 | 快层（默认） | 10 秒 |
+| 动了联机 / 房间池 / 目录 / 认领 | 全套 `--full` | 70 秒 |
+| 交给人试玩之前 | 全套 + 下面「服务器侧」两条 | 70 秒 + 8 秒 |
+| 只改了注释或文档 | `--only syntax` 就够 | 1 秒 |
 
-**动了房间池（`tools/room-pool.py`）或目录的可见性规则**再加跑一条：它起一个真目录、真池与真房间，验"打开界面看不到空房 → 创建一间之后别人才看得到 → 人走光又消失"这条完整生命周期。
+**这三档必须分开用。** 实测一次 319 分钟的对话：**95% 的工具耗时在终端上**，其中大部分是
+反复跑全套——而全套里贵的那几项（联机冒烟 46 秒、房间池 11 秒、服务器上那条 8 秒）
+有大量**设计出来的等待**（起无头实例、等一局跑完、DNS、公网 RTT）。改一行注释之后跑它是纯亏。
+"改一行就全量回归"看起来稳妥，实际是把改动批量化的动力也一起掐掉了。
 
-```powershell
-node tools/pool-check.mjs
-```
-
-**动了「创建公网房间」那条路径**（认领）再跑一条：它起一个真目录，再让真客户端**先起一个列表请求、紧接着认领**——这条覆盖的是"请求真的发出去了、回信真的到了"，而替身把这层跳过了（真机上就是在那里卡死的）。加 `--real` 还会额外用 `config/product.cfg` 里的域名跑一轮，验"域名解析成 IP → 用 IP 发 HTTP"这条链（腾讯云拦未备案域名的那个坑）。
-
-```powershell
-node tools/directory-client-check.mjs
-node tools/directory-client-check.mjs --real   # 额外一轮，要外网 DNS 与一台真服务器
-```
-
-**服务器上多一层东西**（目录 + 房间池，见 `docs/服务端部署.md`）时，端到端验收是另一条：
+**服务器侧的两条**（要 SSH，因此在上面三层之外）：
 
 ```bash
-bash tools/directory-check.sh          # 在服务器本机跑
-node tools/check-server.mjs --host <ssh别名> --advertise <域名>   # 从本机跑（含公网连接与优雅停止）
+ssh <别名> 'cd ~/moltenfrost && bash tools/directory-check.sh'   # 8 秒，七条断言
+node tools/check-server.mjs --host <ssh别名> --advertise <域名>   # 公网，含认领与优雅停止
 ```
 
 前者验：目录活着、**公开列表里没有任何空房**、能认领到一间、认领之后就出现在列表里、
 两人直连同一房间端口、先到的当房主、房主改名与 `playing` 状态传到目录、人齐开局且各看到
-2 个角色、人走光后从公开列表消失且池收敛回只剩备用。
+2 个角色、人走光后从公开列表消失且池**收缩回只剩备用那一间**。
 "本地全绿但公网连不上"先查**安全组**：游戏要 `TCP:27017`（目录）**与**
 `UDP:40001-40020`（房间）**两条**，缺一个都是同一个现象。
 界面与关卡外观没有自动检查（截图脚本 `tests/shot.tscn` 只供人工看一眼），改动之后要自己跑一次截图核对。
+手感、音量、数值这类偏好由人判断，不要替人定。
+
+## 让它保持快：四条硬规则
+
+1. **判定行只用 ASCII。** 所有自检的结论行是 `ok` / `FAIL` / `ALL PASS (N checks)`，
+   **不含中文**——因为中文经 PowerShell 管道会变成乱码，而"跑完看不出结论 → 换一种读法
+   再跑一遍"实测浪费过两次 110 秒。读结论就用
+   `| Select-String 'ok |FAIL|ALL PASS'`，它不受编码影响；要细看细节再写文件 + `-Encoding Unicode`。
+2. **不要直接用 PowerShell 跑 `godot`。** 输出会乱码。要跑就加进 `tools/dev-check.mjs`
+   （它用 Node 收 stdout，因此永远是可读的），或者临时经 Node 包一层。
+3. **改动攒一批再跑，别改一行跑一次。** 快层 10 秒 / 全套 70 秒 / 服务器那条 8 秒，
+   三档按上表用。解析错误这一类用 `--only syntax` 一秒就能定位，不要拿全套去撞。
+4. **部署认准 `--skip-godot`（7 秒）。** 只传一个 1.2 MB 的 bundle；不带它要 **~5 分钟**
+   （75 MB 的 Godot 二进制要过一条对 GitHub 时通时断的线路）。服务器上的 `--import`
+   只要 3 秒，所以别为了省它而加 `--skip-import`（那会让新 `class_name` 不生效）。
+
+细节（每次实测的记录）在 `memory/repo/` 与 `memory/` 里；本文件只留"不知道就会白干半天"的部分。
