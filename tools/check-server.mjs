@@ -45,9 +45,10 @@ const HELP = `熔霜 · 联机服务器验收检查
   --key <私钥路径>     SSH 私钥，默认 ~/.ssh/id_ed25519_moltenfrost
   --port <端口>        单房间模式下的游戏端口，默认 27015
   --directory-port <端口>  目录模式下的目录端口（TCP），默认 27017
-  --room-port <端口>   目录模式下客户端要连的那一间的端口，默认 40001
+  --room-port <端口>   目录模式下要检查的那一间的端口。**只用于旧拓扑**；
+                       池模式下改为像玩家一样向目录认领一间（空房不在列表里）
   --service <名字>     systemd 单元前缀，默认 moltenfrost
-  --rooms <N>          目录模式下有几间房，默认 2
+  --rooms <N>          旧拓扑（模板单元）下有几间房，默认 2
   --room-base-port <端口>  目录模式下房间端口的起点，默认 40001
   --godot <路径>       Godot 可执行文件，默认自动探测
   --verbose            把客户端与 SSH 的输出实时打出
@@ -180,6 +181,39 @@ function makeSsh(opts) {
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
+// 向目录认领一间空房。**走公网 HTTP**（而不是 ssh 到服务器上 curl）：
+// 这一步顺带验证了安全组里 TCP:<目录端口> 确实放行了，而那是玩家取列表的前提。
+// 不断重试是因为刚部署完时池要几秒才能把第一间备用房拉起来，而目录此时会回答
+// `waiting`（不是错误，见 tools/room-directory.py 的 claim()）。
+async function claimRoom(opts) {
+  const url = `http://${opts.advertise || opts.host}:${opts.directoryPort}/rooms/claim`;
+  let last = "";
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    let payload = null;
+    try {
+      const res = spawnSync(
+        "curl", ["-sS", "--max-time", "10", "-X", "POST", url], { encoding: "utf8" },
+      );
+      if (res.status === 0 && res.stdout) payload = JSON.parse(res.stdout);
+      else last = (res.stderr || "").trim() || `curl 退出码 ${res.status}`;
+    } catch (err) {
+      last = err.message;
+    }
+    if (payload && payload.ok && typeof payload.port === "number") return payload;
+    if (payload && payload.waiting) last = "目录说正在准备房间（waiting）";
+    else if (payload) last = JSON.stringify(payload);
+    // 等池补一间备用房：对账周期 2 秒 + 房间启动一两秒。
+    await sleep(2000);
+  }
+  throw new Error(
+    `60 秒内没能从目录领到房间（${url}）：${last}\n` +
+    `・目录有没有在跑：ssh ${opts.user}@${opts.host} 'systemctl is-active ${opts.service}-directory'\n` +
+    `・池有没有在跑：  ssh ${opts.user}@${opts.host} 'systemctl is-active ${opts.service}-pool'\n` +
+    `・安全组放行了吗：需要 TCP:${opts.directoryPort} 与 UDP:<房间端口段>`,
+  );
+}
+
 // 在给定上限内轮询文本，命中就返回耗时，超时返回 -1。
 async function waitForText(read, needle, timeoutMs, pollMs = 200) {
   const startedAt = Date.now();
@@ -211,25 +245,40 @@ async function main() {
   // 拓扑下"发现服务没跑"就把它启动了，而那个多出来的进程会去抢同一个端口
   //（实测踩到：网关与房间全在跑，却多出一个 27015 房间）。
   const directoryUnit = `${opts.service}-directory`;
+  const poolUnit = `${opts.service}-pool`;
   const directoryMode =
     ssh(`systemctl cat ${directoryUnit} >/dev/null 2>&1 && echo yes || echo no`) === "yes";
-  const roomPorts = Array.from({ length: opts.rooms }, (_, i) => opts.roomBasePort + i);
-  const roomUnits = roomPorts.map((p) => `${opts.service}@${p}`);
+  // **房间是不是池管理的。** 池模式下房间里没有自己的 systemd 单元——它们是池的子
+  // 进程，所以"房间在不在跑"要去目录里看，而不是看 `moltenfrost@<端口>`。
+  // 两种拓扑都可以存在（旧的模板单元在部署时会删掉），因此这里探一下。
+  const poolMode = directoryMode &&
+    ssh(`systemctl cat ${poolUnit} >/dev/null 2>&1 && echo yes || echo no`) === "yes";
   const entryUnit = `${opts.service}@${opts.port}`;
-  // 代码一致性要检查**所有在跑的进程**：目录与每间房都是各自的进程，
-  // 只查其中一个的话"另一个跑着旧代码"查不出来。
-  const codeUnits = directoryMode ? [directoryUnit, ...roomUnits] : [entryUnit];
-  // 客户端要连的端口：目录模式下是**那一间房自己的端口**（客户端直连房间）。
-  const gamePort = directoryMode ? opts.roomPort : opts.port;
+  const roomPorts = Array.from({ length: opts.rooms }, (_, i) => opts.roomBasePort + i);
+  // 单房间模式与"目录 + 模板单元"的旧拓扑才看这些单元；池模式下它们不存在。
+  const roomUnits = poolMode ? [] : roomPorts.map((p) => `${opts.service}@${p}`);
+  // 代码一致性要检查**所有在跑的进程**：目录与房间都是各自的进程，
+  // 只查其中一个的话"另一个跑着旧代码"查不出来。池模式下要查目录与池；
+  // 房间是池的子进程，池重启时它们一定跟着换（那正是 K illMode=control-group 的作用）。
+  const codeUnits = directoryMode ? [directoryUnit, ...(poolMode ? [poolUnit] : roomUnits)] : [entryUnit];
+  // 客户端要连的端口。
+  //   单房间模式 —— `--port`（默认 27015）。
+  //   **池模式** —— 向目录**认领一间**（与玩家点「创建公网房间」完全同一条路），
+  //                用拿到的端口。**不能写死 40001**：池里那间空房不在列表里，
+  //                而且它在不在跑取决于人数（没人玩时只剩备用那一间）。
+  //   旧拓扑 —— `--room-port`。
+  let gamePort = opts.port;
   // 正常停止要停的是**这一客户端所连的那一个**：目录模式下客户端直连房间，
   // 于是停那间房会把 ENet 的断开通知直接发给客户端（与单房间模式同一条路径）。
   // **停目录不行**：那不会断开任何已建立的连接，客户端只能等心跳超时。
-  const stopUnit = directoryMode ? `${opts.service}@${opts.roomPort}` : entryUnit;
+  let stopUnit = entryUnit;
 
-  say(`服务器：${opts.host}    客户端连接目标：${target}:${gamePort}`);
+  say(`服务器：${opts.host}    客户端连接目标：${target}`);
   say(`Godot：${godot}`);
   say(`拓扑：${directoryMode
-    ? `房间目录（${directoryUnit}）+ ${roomUnits.length} 间房（客户端直连）`
+    ? (poolMode
+      ? `房间目录（${directoryUnit}）+ 房间池（${poolUnit}，客户端直连其中的房间）`
+      : `房间目录（${directoryUnit}）+ ${roomUnits.length} 间房（模板单元，客户端直连）`)
     : `单房间（${entryUnit}）`}\n`);
 
   // 1. SSH
@@ -238,7 +287,7 @@ async function main() {
 
   // 2. 服务在跑。若不在跑就启动，并等它在监听。
   //    "在跑"与"在监听"是两件事：Godot 启动要几秒，只看 systemctl 会误判。
-  const wantUnits = directoryMode ? [directoryUnit, ...roomUnits] : [entryUnit];
+  const wantUnits = directoryMode ? [directoryUnit, ...(poolMode ? [poolUnit] : roomUnits)] : [entryUnit];
   for (const wanted of wantUnits) {
     const unitState = ssh(`systemctl is-active ${wanted} || true`);
     if (unitState !== "active") {
@@ -270,7 +319,26 @@ async function main() {
       );
     }
   }
-  assertions.push(directoryMode ? `目录与 ${roomUnits.length} 间房跑的代码都与仓库一致` : "服务运行的代码与仓库一致");
+  assertions.push(directoryMode
+    ? (poolMode
+      ? `目录与房间池跑的代码都与仓库一致`
+      : `目录与 ${roomUnits.length} 间房跑的代码都与仓库一致`)
+    : "服务运行的代码与仓库一致");
+
+  // **像玩家一样挑一间房。** 池模式下目录默认只列"非空闲"的房间，而刚部署完的池
+  // 只有一间没人进的备用房——它不在列表里，只能靠认领拿到（这正是玩家点
+  // 「创建公网房间」做的事）。走这条路顺带把认领接口也验了。
+  if (directoryMode) {
+    const claimed = await claimRoom(opts);
+    gamePort = claimed.port;
+    // 池模式下停池（它会逐间请房间自己退出，客户端能立刻收到断开通知）；
+    // 旧拓扑下停那一间房。
+    stopUnit = poolMode ? poolUnit : `${opts.service}@${claimed.port}`;
+    say(`向目录认领到房间 ${claimed.host}:${claimed.port}（名字「${claimed.name}」）`);
+    assertions.push("向目录认领到一间空房（玩家的创建路径）");
+  } else {
+    gamePort = opts.port;
+  }
 
   let listening = false;
   for (let i = 0; i < 30; i++) {

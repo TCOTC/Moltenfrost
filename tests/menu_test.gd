@@ -43,8 +43,26 @@ const STAGE_WAIT_ROOM := 1
 const STAGE_ACTIONS := 2
 const STAGE_DIRECTORY := 3
 
+## 目录客户端的替身。
+##
+## **自检不能真的去要一间房**：认领是一次写操作，它会连上官方服务器、把一间房邻走，
+## 既让测试结果取决于外网，也会影响真在玩的人。取列表那一半同理（原来是真的发了，
+## 只是读操作没人注意）。这里两样都只记下"被调用了"，数据由测试自己喂给 _on_* 处理，
+## 与 _case_room_listed 里那句"用喂数据而不是真起一个 HTTP 服务"是同一个做法。
+class DirectorySpy extends DirectoryClient:
+	var fetches: Array = []
+	var claims: Array = []
+
+	func fetch_rooms(base: String) -> void:
+		fetches.append(base)
+
+	func claim_room(base: String) -> void:
+		claims.append(base)
+
+
 var _menu: Node = null
 var _announcer: LanDiscovery = null
+var _spy: DirectorySpy = null
 var _host_calls: Array = []
 var _join_calls: Array = []
 var _failures: PackedStringArray = PackedStringArray()
@@ -89,6 +107,17 @@ func _case_setup() -> void:
 	_ok(not _menu.visible, "初始界面上场时应当是隐藏的（何时打开由入口脚本决定）")
 	_menu.open(MENU_PORT)
 	_ok(_menu.visible, "open() 之后界面应当可见")
+	# 把目录客户端换成替身（放在 open() 之后：那一步已经把它建好了）。
+	# 此后界面对目录的读写都只落在替身上，不会真的出网。
+	# **要显式放掉原来那个**：它带一个 HTTPRequest 子节点，留着会在退出时
+	# 报 "ObjectDB instances were leaked"，把真正的错误淹掉。
+	var original: Node = _menu.get("_directory_client")
+	if original != null:
+		_menu.remove_child(original)
+		original.free()
+	_spy = DirectorySpy.new()
+	_menu.add_child(_spy)
+	_menu.set("_directory_client", _spy)
 	_ok(_line("PortRow/Port").text == str(MENU_PORT), "端口应当预填默认值，实际「%s」" % _line("PortRow/Port").text)
 	_ok(not _line("HostRow/RoomName").text.is_empty(), "房间名应当有默认值")
 	# 默认类型必须是局域网：它是当前唯一能完整跑通的，
@@ -257,42 +286,50 @@ func _case_actions() -> void:
 		_ok(int(_host_calls[0][1]) == MENU_PORT, "端口应当取自输入框，实际 %d" % int(_host_calls[0][1]))
 		_ok(int(_host_calls[0][2]) == Lobby.Kind.LAN, "默认应当是局域网类型，实际 %d" % int(_host_calls[0][2]))
 
-	# 选公网：它现在是一条**能走的路**，但走法不同——路线 A 里官方房间是**预先存在**的，
-	# 所以"创建公网房间"实际上是"从列表里挑一间空房进去当房主"，
-	# 发的是 join_requested（而不是 host_requested——后者会在本机开一个服务端）。
-	# 先把"有一间空房"这个前提摆好（阶段二喂进去的那三间都不是空的）。
-	_menu.set_message("自检：解除忙碌")
-	_menu.call("_on_directory_rooms", [
-		{"name": "官方·空房", "host": OFFICIAL_HOST, "port": OFFICIAL_ROOM_PORT,
-		 "players": 0, "max": 2, "state": "waiting"},
-	])
+	# 选公网：创建公网房间**先向目录要一间空房**，拿到地址之后才连过去。
+	#
+	# 为什么不能再用列表：空着的备用房根本不在列表里（目录把它们滤掉了，否则玩家一
+	# 打开界面就看见一堆没人进的房间），而且"两个人同时点创建"必须拿到两间不同的房，
+	# 这件事只能由目录原子地做。因此这里验的是两段：点创建只发请求、不该立刻加入；
+	# 目录回了地址之后才发 join_requested。
 	_button("KindRow/Public").button_pressed = true
 	_ok(not _line("HostRow/RoomName").editable, "选公网后房间名那一格应当锁上（名字由房主在大厅里改）")
-	# 端口框里放一个非法值：公网创建不该看它，所以也不该被它拦住。
+	# 端口框里放一个非法值：公网创建不看它（房间在服务器上），所以也不该被它拦住。
 	_line("PortRow/Port").text = NOT_A_PORT
 	var before_public := _join_calls.size()
+	var claims_before := _spy.claims.size()
 	_button("HostRow/Host").pressed.emit()
+	_ok(_spy.claims.size() == claims_before + 1,
+		"公网创建应当向目录要一间房，实际发了 %d 次" % (_spy.claims.size() - claims_before))
+	_ok(_join_calls.size() == before_public,
+		"公网创建不应当立刻加入（要先向目录要房），实际增了 %d 次" % (_join_calls.size() - before_public))
+	_ok(_status().text.contains("要一间房"), "点了创建之后应当说明正在向服务器要房，实际「%s」" % _status().text)
+
+	# 「稍等」不是失败：服务器正忙着补一间备用房时不该报错，也不该当成功。
+	_menu.call("_on_claim_finished", {"ok": false, "waiting": true})
+	_ok(_join_calls.size() == before_public, "「稍等」时不应发加入请求")
+	_ok(_status().text.contains("准备"), "「稍等」时应当说正在准备房间，实际「%s」" % _status().text)
+
+	# 目录回了地址：这才发 join_requested，且类型是公网。
+	_menu.call("_on_claim_finished", {"ok": true, "host": OFFICIAL_HOST, "port": OFFICIAL_ROOM_PORT})
 	_ok(_join_calls.size() == before_public + 1,
-		"公网创建应当发一次 join_requested（进那间空房），实际增了 %d 次" % (_join_calls.size() - before_public))
+		"拿到房间地址后应当发一次 join_requested，实际增了 %d 次" % (_join_calls.size() - before_public))
 	if _join_calls.size() == before_public + 1:
 		var public_call: Array = _join_calls[before_public]
-		_ok(String(public_call[0]) == OFFICIAL_HOST, "应当进列表里那间空房，实际「%s」" % public_call[0])
-		_ok(int(public_call[1]) == OFFICIAL_ROOM_PORT, "应当是那间空房的端口，实际 %d" % int(public_call[1]))
+		_ok(String(public_call[0]) == OFFICIAL_HOST, "应当连目录给出的地址，实际「%s」" % public_call[0])
+		_ok(int(public_call[1]) == OFFICIAL_ROOM_PORT, "应当连目录给出的端口，实际 %d" % int(public_call[1]))
 		_ok(int(public_call[2]) == Lobby.Kind.PUBLIC, "公网创建应当带 PUBLIC 类型，实际 %d" % int(public_call[2]))
 	_ok(_host_calls.size() == 1, "公网创建不应当发 host_requested（那会在本机开服务端），实际共 %d 次" % _host_calls.size())
 	_ok(_label("KindHint").text.contains("公网"), "类型说明行应当跟着切到公网的说明")
 
-	# 没有空房时：不发任何请求，并把原因写出来。
+	# 认领真的失败时：不发请求，并把原因写出来。
 	# 这一条锁的是"不要默默失败"——点了没反应会让玩家反复点。
 	_menu.set_message("自检：解除忙碌")
-	_menu.call("_on_directory_rooms", [
-		{"name": "官方·满员", "host": OFFICIAL_HOST, "port": OFFICIAL_FULL_PORT,
-		 "players": 2, "max": 2, "state": "waiting"},
-	])
-	var before_full := _join_calls.size()
+	var before_fail := _join_calls.size()
 	_button("HostRow/Host").pressed.emit()
-	_ok(_join_calls.size() == before_full, "没有空房时不应当发出加入请求，实际增了 %d 次" % (_join_calls.size() - before_full))
-	_ok(_status().text.contains("空"), "没有空房时状态栏应当说明，实际「%s」" % _status().text)
+	_menu.call("_on_claim_finished", {"ok": false, "reason": "连不上"})
+	_ok(_join_calls.size() == before_fail, "认领失败时不应当发出加入请求，实际增了 %d 次" % (_join_calls.size() - before_fail))
+	_ok(_status().text.contains("连不上"), "失败时状态栏应当写出原因，实际「%s」" % _status().text)
 
 	# 切回局域网：房间名那一格要重新可编辑，并且再点一次应当能正常创建。
 	# 先解除忙碌状态：创建进行中时所有输入都被锁着，而真人要等到连接有结果才能改，

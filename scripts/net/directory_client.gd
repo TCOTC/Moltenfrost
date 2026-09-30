@@ -14,7 +14,15 @@ extends Node
 
 ## 列表到手。`rooms` 是目录返回的那个数组，每项形如
 ## {name, host, port, players, max, state, age, joinable}。
+##
+## **注意它只会有非空的房间**：空着的备用房由目录滤掉了，玩家要进它只能走
+## `claim_room()`。见 tools/room-directory.py 的 busy()。
 signal rooms_fetched(rooms: Array)
+## 认领的结果。`result` 形如：
+##   {"ok": true, "host": "...", "port": N}   —— 拿到一间空房，去连它
+##   {"ok": false, "waiting": true}             —— 服务器正在补一间备用房，过一会儿再试
+##   {"ok": false, "reason": "..."}             —— 真的失败了（连不上、返回码不对……）
+signal claim_finished(result: Dictionary)
 ## 请求失败（连不上、超时、返回码不对、JSON 解不开）。`reason` 可直接显示给玩家。
 signal request_failed(reason: String)
 
@@ -60,6 +68,22 @@ func fetch_rooms(base: String) -> void:
 		return
 	_mode = "fetch"
 	_send(base.path_join("rooms"), HTTPClient.METHOD_GET, {})
+
+
+## 向目录要一间空房（玩家的「创建公网房间」）。
+##
+## 为什么不能自己从列表里挑一间空的：列表里**根本没有空房**——空着的备用房
+## 由目录滤掉了（否则玩家一打开界面就看见一堆没人进的房间）。而认领这个动作
+## 必须由目录原子地完成，否则两个人同时点「创建」会拿到同一间。
+## 见 tools/room-directory.py 的 claim()。
+##
+## 返回是**异步**的，结果走 `claim_finished` 信号。上一个请求还在路上时这一次会被丢弃，
+## 调用方（界面）自己要重试——它本来就要处理"服务器正在补一间"那种重试。
+func claim_room(base: String) -> void:
+	if _mode != "":
+		return
+	_mode = "claim"
+	_send(base.path_join("rooms/claim"), HTTPClient.METHOD_POST, {})
 
 
 ## 开始定期登记。`base` 形如 "http://host:port"，`provider` 是一个**每次发送时**
@@ -143,6 +167,25 @@ func _on_completed(result: int, code: int, _headers: PackedStringArray, body: Pa
 				return
 			_finish("")
 			rooms_fetched.emit((parsed as Dictionary)["rooms"] as Array)
+		"claim":
+			var claimed = JSON.parse_string(text)
+			if not (claimed is Dictionary):
+				_finish("房间目录返回的内容看不懂")
+				return
+			# `waiting` 是成功的一次往返（HTTP 200），只是目录现在没有空房。
+			# 因此这里不走 _finish 的报错分支，否则日志里会多出一行不存在的错误。
+			var payload := claimed as Dictionary
+			if bool(payload.get("waiting", false)):
+				_finish("")
+				claim_finished.emit({"ok": false, "waiting": true})
+				return
+			if not bool(payload.get("ok", false)):
+				# 不在这里自己 emit：_finish 在 claim 模式下会把原因发出去，
+				# 两处都发就会让上游收到两次（界面上表现为重试两次）。
+				_finish("房间目录拒绝了这次请求")
+				return
+			_finish("")
+			claim_finished.emit(payload)
 		"register":
 			# 登记的结果不影响游戏本身（失败只是这一间不会出现在列表里）。
 			# 因此只记一行，不弹给玩家——玩家在大厅里，看到的应该是房间，不是目录的事。
@@ -163,9 +206,11 @@ func _finish(reason: String) -> void:
 	# 而登记每 2 秒重试一次——目录重启的那几秒会给日志刷满没人看懂的堆栈，
 	# 把真正的报错淹掉。这里要的只是"知道了"，一行就够了。
 	print("[dir] %s（%s）" % [reason, mode])
-	# 登记失败不打扰玩家（见上），只有取列表失败才是玩家能感知的。
+	# 登记失败不打扰玩家（见上），只有取列表与认领失败才是玩家能感知的。
 	if mode == "fetch":
 		request_failed.emit(reason)
+	elif mode == "claim":
+		claim_finished.emit({"ok": false, "reason": reason})
 
 
 func _result_name(result: int) -> String:

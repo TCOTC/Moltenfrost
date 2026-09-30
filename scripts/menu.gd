@@ -13,26 +13,29 @@ extends CanvasLayer
 ## 界面与网络层都不该知道。这样分开也便于以后换成公网大厅：换掉房间的来源即可，
 ## 信号形状不变。
 ##
-## 房间列表来自 scripts/net/lan_discovery.gd：主机每秒广播一次，
-## 本界面按报文里的进程标识与游戏端口去重，`room_ttl` 秒收不到同一个房间的广播就把它移除。
+## 房间列表来自两处，合成一份：
+##   **局域网** —— scripts/net/lan_discovery.gd。主机每秒广播一次，
+##                  本界面按报文里的进程标识与游戏端口去重，`room_ttl` 秒收不到就移除。
+##   **公网**   —— 官方房间目录（config/product.cfg 里的地址），每几秒拉一次。
 ##
-## 除了探测到的房间，列表最前面还有一个**固定条目：官方公网服务端**。
-## 它的存在有两个理由：跨网联机时局域网探测本来就收不到对方的广播（受限广播只走默认路由那张网卡），
-## 而玩家也不该为了连官方服务器去手输一遍域名。
-##
-## 那个地址**不写在这里**，而是读 config/product.cfg（见 scripts/product_config.gd）：
-## 它随部署变化（换机器、换域名），而界面只是它的一个使用者。
+## **公网那一份只看得到「有人」的房间。** 服务器上总有一间没人玩的空房备着，
+## 而它不出现在列表里：玩家打开界面看到的是空的，自己点「创建」才会认领一间，
+## 那一间随后就出现在别人的列表里。空的房间为什么要藏着、以及为什么只能由目录
+## 原子地交付，见 tools/room-directory.py 的文件头与 claim()。
 
 signal host_requested(room_name: String, port: int, kind: int)
-signal join_requested(address: String, port: int)
-
-## 固定条目在列表里的显示名。带"官方"二字是为了与探测到的玩家房间区分开。
-## 这是展示文案而非环境相关的值，所以留在代码里。
-const OFFICIAL_NAME := "官方房间（公网）"
+signal join_requested(address: String, port: int, kind: int)
 
 ## 端口输入框的合法范围。
 const MIN_PORT := 1
 const MAX_PORT := 65535
+## 认领失败后重试的间隔与次数。
+##
+## 需要重试是因为两种情况都不算错误：服务器正忙着补一间备用房（对账周期 2 秒 +
+## 房间启动一两秒），以及刚部署完目录与房间还没起来。把它们当错误报给玩家，
+## 而实际上再等一下就好了。
+const CLAIM_RETRY_INTERVAL := 1.5
+const CLAIM_RETRY_LIMIT := 12
 
 var _discovery: LanDiscovery = null
 ## 正在连接或创建房间时禁用输入，避免连点。
@@ -78,6 +81,10 @@ var _directory_elapsed := 0.0
 ## 目录列表的刷新间隔（秒）。比房间的登记间隔慢：列表不需要那么灵敏，
 ## 而它每次都是一次 HTTP 往返。
 const DIRECTORY_REFRESH := 3.0
+## 正在等认领结果时的剩余重试次数与计时。见 CLAIM_RETRY_INTERVAL。
+var _claim_retries := 0
+var _claim_waiting := false
+var _claim_elapsed := 0.0
 
 
 func _ready() -> void:
@@ -109,6 +116,7 @@ func _ready() -> void:
 	_directory_client = DirectoryClient.new()
 	_directory_client.rooms_fetched.connect(_on_directory_rooms)
 	_directory_client.request_failed.connect(_on_directory_failed)
+	_directory_client.claim_finished.connect(_on_claim_finished)
 	add_child(_directory_client)
 	set_process(true)
 	_refresh.pressed.connect(_on_refresh_pressed)
@@ -144,6 +152,12 @@ func _process(delta: float) -> void:
 	# 隐藏时不发请求：界面关掉之后玩家在跑关卡，没必要再拉列表。
 	if not visible:
 		return
+	if _claim_waiting:
+		_claim_elapsed += delta
+		if _claim_elapsed >= CLAIM_RETRY_INTERVAL:
+			_claim_waiting = false
+			_request_public_room()
+			return
 	_directory_elapsed += delta
 	if _directory_elapsed < DIRECTORY_REFRESH:
 		return
@@ -209,20 +223,47 @@ func _on_host_pressed() -> void:
 ## 「创建公网房间」= 找一间空房进去当房主。
 ##
 ## 不校验本机端口：公网房间跑在官方服务器上，本机那个端口用不上。
-## 也不要求先拉过一次目录——没有列表时先拉一次并告诉玩家稍等。
+##
+## **不再自己从列表里挑一间空房。** 列表里根本没有空房（目录把备用房滤掉了），
+## 而且“两个人同时点创建”必须拿到两间不同的房，这件事只能由目录原子地做。
+## 因此这里只是一个请求：要一间空房 → 拿回地址 → 连它。见 DirectoryClient.claim_room。
 func _create_public_room() -> void:
-	var free_room := {}
-	for room in _official_rooms:
-		if _joinable(room) and int(room.get("players", 0)) == 0:
-			free_room = room
-			break
-	if free_room.is_empty():
-		# 官方房间都有人，或者列表还没拉到。两种情况都不该默默失败。
-		_directory_elapsed = DIRECTORY_REFRESH
-		_fetch_public_rooms_now()
-		_set_status("现在没有空着的官方房间（每个房间只坐 %d 人）。列表里有人的房间还在等队友，也可以自己开一间局域网房间。" % Lobby.MIN_PLAYERS)
+	_claim_retries = CLAIM_RETRY_LIMIT
+	_claim_waiting = false
+	_request_public_room()
+
+
+## 发一次认领请求。失败与“稍等”都由 _on_claim_finished 处理。
+func _request_public_room() -> void:
+	_set_busy("正在向官方服务器要一间房…")
+	_directory_client.claim_room(ProductConfig.official_directory_url())
+
+
+## 认领的结果。三种情况，而且"稍等"那一种不是错误：
+##   ok       —— 拿到了地址，直接连过去（接下来就是普通的一次加入）
+##   waiting  —— 服务器正在补一间备用房（对账 2 秒 + 房间启动一两秒），过一会儿再试
+##   其它     —— 真的失败了，把原因原样给玩家
+func _on_claim_finished(result: Dictionary) -> void:
+	if bool(result.get("ok", false)):
+		_claim_retries = 0
+		_claim_waiting = false
+		_begin_join(String(result.get("host", "")), int(result.get("port", 0)), Lobby.Kind.PUBLIC)
 		return
-	_begin_join(String(free_room["address"]), int(free_room["port"]), Lobby.Kind.PUBLIC)
+	if bool(result.get("waiting", false)):
+		if _claim_retries > 0:
+			# 不把重试次数一次用完：第一次“稍等”是**正常**的，服务器总要几秒
+			# 才能补上新的一间。直接报失败会让玩家以为功能坏了。
+			_claim_retries -= 1
+			_claim_waiting = true
+			_claim_elapsed = 0.0
+			_set_busy("官方服务器正在准备房间，稍等一下…")
+			return
+		_clear_busy()
+		_set_status("等了很久还是没有空房。官方那边的名额可能已经满了，稍后再试，或者先开一间局域网房间。")
+		return
+	_claim_waiting = false
+	_clear_busy()
+	_set_status("申请房间失败：%s" % String(result.get("reason", "未知原因")))
 
 
 ## 手动拉一次列表。与定期的那个共用一次请求，只是不等计时器。
@@ -243,6 +284,9 @@ func _on_join_pressed() -> void:
 
 ## 不能进的房间要点得动的话，点了之后只会白等一次连接超时。
 ## 因此直接置灰，并把原因写在状态栏。
+##
+## 空着的备用房根本不会出现在列表里（目录滤掉了），所以这里不需要处理"没人但可以当房主"
+## 那一种：想当房主就点「创建房间」，那条路会去认领。
 func _joinable(room: Dictionary) -> bool:
 	if not bool(room.get("official", false)):
 		return true
@@ -282,7 +326,7 @@ func _set_room_kind(kind: int) -> void:
 ## 而是从官方列表里挑一间空房进去当房主。
 func _refresh_kind_hint() -> void:
 	if _room_kind == Lobby.Kind.PUBLIC:
-		_kind_hint.text = "公网 · 房间开在官方服务器上，跨网也能加入。点创建会进一间空房并由你当房主，进去之后可以改房间名；别人也能在左侧列表里选中它加入。"
+		_kind_hint.text = "公网 · 房间开在官方服务器上，跨网也能加入。点创建会领一间空房并由你当房主，进去之后可以改房间名；别人也能在左侧列表里看到它并加入。"
 	else:
 		_kind_hint.text = "局域网 · 房间开在本机，同一局域网里的人在左侧列表里就能看到它。"
 

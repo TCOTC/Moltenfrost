@@ -48,7 +48,12 @@ const HELP = `熔霜 · 部署到联机服务器
                        **需要安全组放行 TCP:<目录端口> 与 UDP:<房间端口段>**，
                        因为客户端是直连房间的（见 docs/公网房间方案.md）
   --directory-port <端口>   目录的端口（TCP），默认 27017
-  --rooms-count <N>    托管几个房间，默认 2
+  --pool-max-rooms <N> 房间端口段最多几间，默认 8。**它决定安全组要放行到哪一号**
+                       （base + N - 1）；到不到得了那么多间另说，真正的限制是内存与 CPU。
+                       房间不再是预开的：tools/room-pool.py 按"非空闲房间数 + 备用数"
+                       自己拉起与收掉子进程
+  --pool-spare <N>     恒比非空闲房间多留几间备用，默认 1。**1 就是"永远有一间空房等着"**：
+                       玩家点「创建」不必等进程启动，而别人列表里也看不到任何空房
   --max-per-room <N>   每个房间容纳几个玩家，默认 2。**不要改大**：关卡只配了两个出生点，
                        多出来的人会与第一个人重叠生成（见 scenes/levels/level_01.tscn）
   --room-base-port <端口>  房间端口的起点，默认 40001。**不要用 27016**，那是局域网探测端口
@@ -69,7 +74,8 @@ function parseArgs(argv) {
     enableService: false,
     directory: false,
     directoryPort: 27017,
-    roomsCount: 2,
+    poolMaxRooms: 8,
+    poolSpare: 1,
     maxPerRoom: 2,
     roomBasePort: 40001,
     skipGodot: false,
@@ -94,7 +100,8 @@ function parseArgs(argv) {
       case "--enable-service": opts.enableService = true; break;
       case "--directory": opts.directory = true; break;
       case "--directory-port": opts.directoryPort = Number(next()); break;
-      case "--rooms-count": opts.roomsCount = Number(next()); break;
+      case "--pool-max-rooms": opts.poolMaxRooms = Number(next()); break;
+      case "--pool-spare": opts.poolSpare = Number(next()); break;
       case "--max-per-room": opts.maxPerRoom = Number(next()); break;
       case "--room-base-port": opts.roomBasePort = Number(next()); break;
       case "--skip-godot": opts.skipGodot = true; break;
@@ -276,7 +283,8 @@ async function main() {
   if (opts.advertise) remoteArgs.push("--advertise", opts.advertise);
   if (opts.directory) {
     remoteArgs.push("--directory", "--directory-port", String(opts.directoryPort),
-      "--rooms-count", String(opts.roomsCount),
+      "--pool-max-rooms", String(opts.poolMaxRooms),
+      "--pool-spare", String(opts.poolSpare),
       "--max-per-room", String(opts.maxPerRoom),
       "--room-base-port", String(opts.roomBasePort));
   }
@@ -292,12 +300,14 @@ async function main() {
   const reachable = opts.advertise || opts.host;
   if (opts.directory) {
     // 目录模式下没有"一个统一的游戏端口"：玩家从列表里拿到的每一项都带自己的
-    // host:port。因此这里要提示的是"怎么把房间带起来"与"怎么看列表"，
+    // host:port。因此这里要提示的是"怎么把目录与池带起来"与"怎么看列表"，
     // 而不是一条连到 27015 的试跑命令——那条命令已经没意义了。
+    const lastPort = opts.roomBasePort + opts.poolMaxRooms - 1;
     process.stdout.write(
       `房间目录：${reachable}:${opts.directoryPort}（TCP）\n` +
-      `房间端口：${opts.roomBasePort}..${opts.roomBasePort + opts.roomsCount - 1}（UDP，每间一个）\n` +
-      `看列表：ssh ${opts.user}@${opts.host} 'curl -s http://127.0.0.1:${opts.directoryPort}/rooms'\n`,
+      `房间端口：${opts.roomBasePort}..${lastPort}（UDP，池按需使用，平常只占 1 间）\n` +
+      `看已公开的房间：ssh ${opts.user}@${opts.host} 'curl -s http://127.0.0.1:${opts.directoryPort}/rooms'\n` +
+      `看池里的全部（含备用）：ssh ${opts.user}@${opts.host} 'curl -s "http://127.0.0.1:${opts.directoryPort}/rooms?all=1"'\n`,
     );
   } else {
     process.stdout.write(
@@ -308,19 +318,19 @@ async function main() {
   if (opts.enableService) {
     if (opts.directory) {
       // 目录模式下玩家连的是**每间房自己的端口**，而不是一个统一的游戏端口。
-      // 因此这里逐个列出要启动的单元，并把"安全组要开哪两个"明写出来——
+      // 因此这里把"要启动哪两个单元"与"安全组要开哪两条"明写出来——
       // 少写一个的现象是"房间在跑、目录也有，但玩家连不上"，而那种现象
       // 与"服务器没开"长得一样，很难联想到安全组。
-      const rooms = Array.from({ length: opts.roomsCount }, (_, i) => opts.roomBasePort + i);
+      const lastPort = opts.roomBasePort + opts.poolMaxRooms - 1;
       process.stdout.write(
-        `启动房间目录与每一间房：\n` +
+        `启动房间目录与房间池：\n` +
         `  sudo systemctl enable --now moltenfrost-directory\n` +
-        rooms.map((p) => `  sudo systemctl enable --now moltenfrost@${p}`).join("\n") + "\n" +
+        `  sudo systemctl enable --now moltenfrost-pool\n` +
         `安全组要放行两条（缺一条都会表现为"连不上"）：\n` +
         `  TCP:${opts.directoryPort}            房间目录\n` +
-        `  UDP:${rooms[0]}-${rooms[rooms.length - 1]}            房间（每间一个端口）\n` +
-        `若旧的单房间服务还占着 ${opts.port}，它已经不需要了：sudo systemctl disable --now moltenfrost@${opts.port}\n` +
-        `看日志：  ssh ${opts.user}@${opts.host} 'journalctl -u moltenfrost-directory -f'\n` +
+        `  UDP:${opts.roomBasePort}-${lastPort}            房间（池最多用这么多间）\n` +
+        `若旧的单房间服务或房间模板单元还在，本次部署已经把它们停掉并删了。\n` +
+        `看日志：  ssh ${opts.user}@${opts.host} 'journalctl -u moltenfrost-pool -f'\n` +
         `看列表：  ssh ${opts.user}@${opts.host} 'curl -s http://127.0.0.1:${opts.directoryPort}/rooms'\n`,
       );
     } else {
