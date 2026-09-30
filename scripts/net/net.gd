@@ -190,10 +190,17 @@ func local_id() -> int:
 	return multiplayer.get_unique_id()
 
 
-## 开始监听。绑定地址用默认的通配符，因此环回与局域网网卡同时生效：
+## 开始监听。默认绑定地址是通配符，因此环回与局域网网卡同时生效：
 ## 同一台机器上的第二个实例连 127.0.0.1，局域网内其他设备连内网 IP，都不需要额外配置。
-func host(p_port: int = DEFAULT_PORT, p_dedicated: bool = false) -> Error:
+##
+## `bind_ip` 只在**公网房间**里用，且固定传环回（见 docs/公网房间方案.md 路线 ②）：
+## 那些房间由网关在 27015 上分流，房间自己的端口（40000 段）不该出现在任何对外网卡上。
+## 这样即便安全组以后意外放行了那一段，外部也进不来——安全边界不靠安全组单独撑着。
+## 注意 create_server() 没有绑定地址参数，要先用 set_bind_ip() 指定。
+func host(p_port: int = DEFAULT_PORT, p_dedicated: bool = false, bind_ip: String = "") -> Error:
 	var peer := ENetMultiplayerPeer.new()
+	if not bind_ip.is_empty():
+		peer.set_bind_ip(bind_ip)
 	var err := peer.create_server(p_port, MAX_CLIENTS)
 	if err != OK:
 		push_error("端口 %d 无法监听：%s" % [p_port, error_string(err)])

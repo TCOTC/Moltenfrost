@@ -43,7 +43,14 @@ const MIN_PLAYERS := 2
 @onready var _leave: Button = $Root/Layout/Footer/Buttons/Leave
 @onready var _status: Label = $Root/Layout/Footer/Status
 
-## 本机是不是房主（= 服务端）。只有房主能开局，所以这个标记决定按钮是可点还是说明。
+## 本机是不是房主。**从名单里推出来**，而不是自己去问「本机是不是服务端」。
+## 两个理由：
+##   1. 公网房间跑在专用服务端上，peer 1 是无头进程、不是玩家，那个判据在那边
+##      会让按钮永远是灰的（见 scripts/main.gd 的 host_id）。
+##   2. 这里**不能引用 Net**：--script 模式不注册自动加载单例，引用它会以
+##      「Identifier not found: Net」编译失败，而 menu.gd 引用了本文件，
+##      于是连初始界面的接线测试都跑不起来（仓库里记过这个坑）。
+##      名单里的 you 与 host 已经够用：两者同时为真就是本机是房主。
 var _is_host := false
 var _player_count := 0
 ## 一条临时说明（例如"对方已断开"）。非空时它压过按名单推出来的那句小结，
@@ -70,12 +77,12 @@ static func kind_name(kind: int) -> String:
 	return "公网" if kind == Kind.PUBLIC else "局域网"
 
 
-## 打开大厅。`is_host` 决定「开始游戏」是可点还是只作说明（只有房主能开局）。
-func open(is_host: bool) -> void:
-	_is_host = is_host
+## 打开大厅。名单还没到，因此房主是谁、有几个人都要等 apply() 才知道。
+func open() -> void:
 	visible = true
 	_clear_rows()
 	_player_count = 0
+	_is_host = false
 	# 名单要等主机下发（槽位与元素只有服务端分得出来），这句占位让面板在那之前不是空的。
 	_notice = "正在等待房间信息…"
 	_refresh()
@@ -85,9 +92,10 @@ func close() -> void:
 	visible = false
 
 
-## 用服务端下发的房间信息刷新整屏。各端收到的内容相同，因此显示不会互相矛盾。
-## 形状：{name: String, kind: int, address: String, players: Array[Dictionary]}
-## 每个玩家项：{id: int, slot: int, element: int, host: bool}
+## 用服务端下发的房间信息刷新整屏。各端收到的内容相同，但是**you 是各端自己补的**
+##（见 main.gd 的 _with_local_flags），因此房主这一判断在各端会得出各自的答案。
+## 形状：{name: String, kind: int, address: String, host_id: int, players: Array[Dictionary]}
+## 每个玩家项：{id: int, slot: int, element: int, host: bool, you: bool}
 func apply(info: Dictionary) -> void:
 	_room_name.text = String(info.get("name", "未命名房间"))
 	_kind.text = "类型 · %s" % kind_name(int(info.get("kind", Kind.LAN)))
@@ -97,9 +105,12 @@ func apply(info: Dictionary) -> void:
 	_address.text = address if not address.is_empty() else "—"
 	_clear_rows()
 	var entries: Array = info.get("players", [])
+	_is_host = false
 	for entry in entries:
 		if entry is Dictionary:
 			_add_row(entry)
+			if bool((entry as Dictionary).get("you", false)) and bool((entry as Dictionary).get("host", false)):
+				_is_host = true
 	_player_count = entries.size()
 	_count.text = "在场 %d 人" % _player_count
 	# 名单变了就把临时说明清掉，让位给按新名单推出来的小结。
@@ -170,23 +181,23 @@ func _refresh() -> void:
 	else:
 		_start.disabled = not enough
 		_start.text = "开始游戏" if enough else "开始游戏（还差 %d 人）" % (MIN_PLAYERS - _player_count)
-	_start_hint.text = _hint_text(enough)
-	_set_status(_notice if not _notice.is_empty() else _summary())
+	_start_hint.text = _hint_text(enough, _is_host)
+	_set_status(_notice if not _notice.is_empty() else _summary(_is_host))
 
 
 ## 按当前名单推出来的那句小结。与 _hint_text 分开：
 ## 那一句说的是"按钮为什么能点/不能点"（常驻在按钮上方），
 ## 这一句说的是"现在是什么情况"（在底部的状态行），两者受众位置不同。
-func _summary() -> String:
-	if not _is_host:
+func _summary(is_host: bool) -> String:
+	if not is_host:
 		return "已进入房间，等房主点「开始游戏」。"
 	if _player_count >= MIN_PLAYERS:
 		return "可以开始了。也可以再等一会儿，看看还有没有人进来。"
 	return "等待对方加入。这个房间已经在局域网里广播过了，对方打开游戏就能在列表里看到它。"
 
 
-func _hint_text(enough: bool) -> String:
-	if not _is_host:
+func _hint_text(enough: bool, is_host: bool) -> String:
+	if not is_host:
 		return "已经进入房间，等房主点「开始游戏」。"
 	if enough:
 		return "人齐了，点下面的「开始游戏」进入关卡。也可以等一会儿，让更多人加入。"

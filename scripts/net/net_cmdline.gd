@@ -10,6 +10,11 @@ extends RefCounted
 ## 但直接写在引擎参数里也接受。`--host` 这类名字不与引擎自带参数冲突，
 ## 而未识别的参数引擎会忽略（官方文档明确写了不会给出任何提示），
 ## 所以两种写法都扫一遍，后扫到的覆盖先扫到的。
+##
+## 与服务端分流相关的两个参数：
+##   --bind <地址>   服务端只在该地址上监听（公网房间传 127.0.0.1）
+##   --lobby         停在大厅，等房主点开始（不带则连上即开局）。
+##                   `--host` 与 `--join` 两个方向都适用。
 
 
 ## 读取本进程的命令行，返回形如 {"host": true, "join": "1.2.3.4", "port": 27015} 的字典。
@@ -54,6 +59,19 @@ static func parse(args: PackedStringArray) -> Dictionary:
 					i += 1
 			"--net-stats":
 				opts["net_stats"] = true
+			"--lobby":
+				# 启动后停在大厅，等人齐由房主点开始。公网房间用这个：它们由网关按需
+				# 分配玩家，谁先到谁当房主，因此服务端不能自己就开局。
+				# 不带这个开关的无头启动仍然是"连上即开局"——交付前自检依赖它。
+				opts["lobby"] = true
+			"--bind":
+				# 服务端的绑定地址。公网房间固定传 127.0.0.1，理由见 net.gd 的 host()。
+				var bind_raw := _value_at(args, i + 1)
+				if bind_raw.is_empty():
+					push_error("--bind 后面需要接一个地址，例如 --bind 127.0.0.1")
+				else:
+					opts["bind"] = bind_raw
+					i += 1
 			"--autopilot":
 				opts["autopilot"] = true
 			"--autopilot-stop":

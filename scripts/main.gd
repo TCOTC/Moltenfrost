@@ -52,6 +52,8 @@ var _menu: MainMenu = null
 var _discovery: LanDiscovery = null
 ## 等待房间。它只在**界面路径**上出现（命令行 --host/--join 仍是「连上即开局」）。
 var _lobby: Lobby = null
+## 最近一次从服务端收到的大厅信息里，房主是谁。客户端唯一的来源，见 is_local_host()。
+var _host_id_from_server := 0
 ## 本局是否已经开始。开局之前不生成任何角色：大厅只报「谁在房间里」，场上没有人。
 ##
 ## 用「不生成」而不是「生成了但冻住」：后者要先处理冻结时的物理、死亡与技能，
@@ -67,10 +69,15 @@ var _room_name: String = ""
 var _join_target: String = ""
 ## `--advertise` 给的对外地址，只用于提示文案。空表示没给。
 var _advertise: String = ""
+## 服务端只在这个地址上监听。空 = 通配（局域网房间用）；公网房间固定为环回。
+var _bind_ip: String = ""
 var _port: int = 0
 var _notice: String = ""
 ## peer id 到槽位的对应，只在服务端维护。
 var _slots: Dictionary = {}
+## 服务端侧：玩家加入的先后。**房主由它决定**（第一个还在线的人），
+## 而不是看谁是 peer 1。理由见 host_id()。
+var _join_order: Array[int] = []
 var _stats_enabled: bool = false
 var _stats_elapsed: float = 0.0
 ## 本区间内的帧时范围。帧时本身跳动大，说明画面在抖，而不是远端角色的位置在停。
@@ -118,6 +125,7 @@ func _start_session() -> void:
 	var opts := NetCmdline.from_process()
 	_port = int(opts.get("port", Net.DEFAULT_PORT))
 	_advertise = String(opts.get("advertise", ""))
+	_bind_ip = String(opts.get("bind", ""))
 	_stats_enabled = opts.has("net_stats")
 	# 手感数值可临时覆盖，便于不动代码地扫参。不给参数时取脚本里的默认值，
 	# 因此这里只是把命令行值写回同一个静态变量；推算式见 player.gd 里各自的注释。
@@ -146,15 +154,20 @@ func _start_session() -> void:
 	_report_feel()
 
 	if opts.has("join"):
-		_begin_join(String(opts["join"]), _port)
+		# `--lobby` 对两个方向都适用：公网房间的客户端也停在大厅等人开局，
+		# 而它只能以客户端身份加入（见 docs/公网房间方案.md 路线 ②）。
+		# 不带则仍然是"连上即开局"——专用服务端与交付前自检依赖它。
+		_begin_join(String(opts["join"]), _port, opts.has("lobby"))
 		return
 
 	# 无头运行时没有人能点界面，因此直接当专用服务端——AGENTS.md 的交付前自检用的就是这条路径。
+	# 带了 `--lobby` 时改为停在大厅等人开始：公网房间由网关按需分配玩家，
+	# 谁先到谁当房主，因此服务端不能自己就开局（见 docs/公网房间方案.md 路线 ②）。
 	if DisplayServer.get_name() == "headless":
-		_host_game("", _port, true)
+		_host_game("", _port, true, opts.has("lobby"))
 		return
 	if opts.has("host"):
-		_host_game("", _port, false)
+		_host_game("", _port, false, opts.has("lobby"))
 		return
 	# 有画面而不带参数：停在初始界面上，由玩家决定创建房间还是加入别人的房间。
 	_show_menu(_port)
@@ -211,7 +224,7 @@ func _show_lobby() -> void:
 	_hud.visible = false
 	_menu_camera.enabled = true
 	_menu_camera.make_current()
-	_lobby.open(Net.is_server())
+	_lobby.open()
 	_refresh_lobby()
 
 
@@ -220,30 +233,89 @@ func _hide_lobby() -> void:
 		_lobby.close()
 
 
-## 把本机的那份名单画出来。服务端与客户端走同一个函数，
-## 区别只在名单从哪来（本地构造 vs 收到的 RPC），因此两端的显示不会分叉。
+## 把本机的那份名单画出来。**只有服务端构造名单**：槽位、元素、房主都只有它知道，
+## 客户端自己造会造出一份错内容——它会把自己那个 peer 1（就是服务端）当成房主、
+## 房间名与类型都是自己的默认值（实测：客户端显示“房主 peer 1”“房间「」类型局域网”，
+## 而服务端报的是完全不同的东西）。客户端只等 _rpc_lobby_info。
 func _refresh_lobby() -> void:
-	if _lobby == null:
+	if _lobby == null or not Net.is_server():
 		return
-	_lobby.apply(_with_local_flags(_lobby_info()))
+	_apply_lobby(_lobby_info())
+
+
+## 把名单落到界面上，并留一行日志。两端的名单（服务端自己构造的、客户端收到的）
+## 都汇聚到这里，因此“谁在什么时候看到几号人”只有一个来源。
+##
+## 那行日志不是装饰：公网房间里“客户端卡在大厅的等待文案上”与“服务端没下发名单”
+## 在日志上完全一样（都是什么也没发生），而只有这一行能区分它们——
+## 收到了没有、收到几个人、房主是谁。因此它留在正式代码里，不进测试脚本。
+func _apply_lobby(info: Dictionary) -> void:
+	_host_id_from_server = int(info.get("host_id", 0))
+	var marked := _with_local_flags(info)
+	if _lobby != null:
+		_lobby.apply(marked)
+	var who := int(info.get("host_id", 0))
+	var players: Array = marked.get("players", [])
+	print("[lobby] 名单：%d 人  房主 peer %d  房间「%s」 类型 %s  %s" % [
+		players.size(), who, String(info.get("name", "")),
+		Lobby.kind_name(int(info.get("kind", 0))),
+		"我是房主" if is_local_host() else "等待房主",
+	])
 
 
 ## 服务端把名单下发给各端。客户端不能自己推：槽位与元素只有服务端分配得出来。
+##
+## 下发的条件**不看本机的大厅界面是否可见**：公网房间是无头的，它没有可见的大厅，
+## 但必须把名单下发出去，否则客户端根本进不了大厅（它们的界面上会一直是空的）。
 func _broadcast_lobby() -> void:
-	# 不在大厅里就不发。对局中重发名单没有接收方，而这条路径会被
-	# peer_connected/peer_disconnected 无条件调到，包括晚加入的时候。
-	if _lobby == null or not _lobby.visible:
+	if _lobby != null and _lobby.visible:
+		_refresh_lobby()
+	if not in_lobby():
 		return
-	_refresh_lobby()
 	if Net.is_server() and not multiplayer.get_peers().is_empty():
 		_rpc_lobby_info.rpc(_lobby_info())
+
+
+## 本局是不是还停在大厅。服务端与客户端共用同一个判据，
+## 因此"什么时候该显示名单、什么时候该收下"两端不会分叉。
+func in_lobby() -> bool:
+	return _via_lobby and not _game_started
+
+
+## 房间的房主。**由"谁先进来"决定**，不是看谁是 peer 1。
+##
+## 为什么不能看 peer 1：公网房间跑在专用服务端上，peer 1 是那个无头进程、
+## 根本不是玩家，于是 `Net.is_server()` 在所有客户端上都是 false——
+## 按它判断的话这个房间**没有人能开局**（按钮永远是灰的）。
+## 局域网房间不受影响：它的 peer 1 就是房主自己，两者结果一致。
+##
+## **这个函数只在服务端有意义**（加入顺序只有服务端有）。
+## 客户端请用 is_local_host()——它读的是服务端下发的那一份。
+## 实测踩到的坑：早先客户端也调这里，`Net.is_dedicated()` 在客户端是 false，
+## 于是它返回 1，而客户端自己的 id 是随机数，两者永不相等——
+## 结果是房主点了「开始游戏」**什么也没发生**（守门那句直接 return，不报错）。
+func host_id() -> int:
+	if not Net.is_server():
+		return 0
+	if not Net.is_dedicated():
+		return 1
+	if _join_order.is_empty():
+		return 0
+	return _join_order[0]
+
+
+## 本机是不是房主。两端各用自己的那份信息：
+##   服务端 —— 自己算的 host_id()
+##   客户端 —— **服务端下发的那一份**（自己算不出来）
+func is_local_host() -> bool:
+	var who := host_id() if Net.is_server() else _host_id_from_server
+	return who != 0 and who == Net.local_id()
 
 
 ## 大厅要显示的内容。形状见 Lobby.apply 的说明。
 func _lobby_info() -> Dictionary:
 	var entries: Array = []
-	# 房主本人（peer 1）也是一个玩家。专用服务端不是玩家，但它不会走到这里
-	#（无头启动不开界面），因此 _room_name 与 _join_hint 在那边也不适用。
+	# 房主本人（peer 1）也是一个玩家。专用服务端不是玩家，所以不进名单。
 	if not Net.is_dedicated():
 		entries.append(_lobby_entry(1))
 	for id in multiplayer.get_peers():
@@ -252,6 +324,7 @@ func _lobby_info() -> Dictionary:
 		"name": _room_name,
 		"kind": _room_kind,
 		"address": _join_hint(),
+		"host_id": host_id(),
 		"players": entries,
 	}
 
@@ -262,7 +335,7 @@ func _lobby_entry(id: int) -> Dictionary:
 		"id": id,
 		"slot": slot,
 		"element": _element_for(slot),
-		"host": id == 1,
+		"host": id == host_id(),
 		# 这里**不写 "you"**：它在各端是不同的，而这份字典是服务端构造后原样下发的，
 		# 写进去等于把房主的答案发给所有人（所有人都会看到自己那一行变成房主）。
 	}
@@ -285,12 +358,19 @@ func _with_local_flags(info: Dictionary) -> Dictionary:
 
 # ---------------------------------------------------------------- 开局
 
+## 房主点了「开始游戏」。
+##
+## 两种房间走两条路，因为"服务端"在两边不是同一个东西：
+##   局域网（listen server）—— 房主就是服务端，直接开局
+##   公网（专用服务端）—— 房主是个普通客户端，只能**请**服务端开局
+## 服务端收到请求后会再校一次发送者是不是房主（见 _rpc_request_start）。
 func _on_lobby_start_requested() -> void:
-	# 只有房主能开局。界面已经把按钮置灰，这里再判一次：
-	# 开局是不可逆的动作（会生成角色、广播通知），值得再挡一道。
-	if not Net.is_server():
+	if not is_local_host():
 		return
-	_start_game()
+	if Net.is_server():
+		_start_game()
+		return
+	_rpc_request_start.rpc_id(1)
 
 
 func _on_lobby_leave_requested() -> void:
@@ -327,8 +407,17 @@ func _start_game() -> void:
 func _host_game(room_name: String, port: int, dedicated: bool, via_lobby: bool = false) -> void:
 	_room_name = room_name if not room_name.is_empty() else LanDiscovery.default_room_name()
 	_port = port
+	# 这两个标记必须成对设置。少设 `_via_lobby` 的后果不是界面难看，而是**名单根本不下发**——
+	# `_broadcast_lobby()` 与 `in_lobby()` 都看它，于是客户端等在大厅里什么也收不到，
+	# 而日志里只有一句“已连接到主机”。这个坑实测踩过一轮（服务器端永远不广播）。
+	_via_lobby = via_lobby
 	_game_started = not via_lobby
-	if Net.host(_port, dedicated) != OK:
+	# 只绑环回的房间就是**网关背后那件**（见 docs/公网房间方案.md 路线 ②），
+	# 因此它的类型是公网。这件事服务端自己就能判定（看绑定地址），
+	# 不需要别人告诉它——否则大厅会把它显示成局域网，与实际不符。
+	if _bind_ip.begins_with("127.") or _bind_ip == "::1":
+		_room_kind = Lobby.Kind.PUBLIC
+	if Net.host(_port, dedicated, _bind_ip) != OK:
 		# 唯一可预期的失败是端口被占用（例如开发实例还开着同一个端口）。
 		# 有画面时回到界面让人换端口重试，无头时只能把原因写进日志。
 		var message := "端口 %d 被占用，无法创建房间。换一个端口再试。" % _port
@@ -376,6 +465,8 @@ func _return_to_menu(message: String) -> void:
 	_game_started = false
 	_via_lobby = false
 	_room_kind = Lobby.Kind.LAN
+	_join_order.clear()
+	_host_id_from_server = 0
 	if DisplayServer.get_name() == "headless":
 		# 无头运行时没有界面可回，停在"尚未开始会话"状态即可。
 		_refresh_status()
@@ -403,6 +494,14 @@ func _start_announcing() -> void:
 	if Net.port <= 0:
 		print("[lan] 本机端口由系统分配，不广播房间（别人拿不到可以连接的端口）")
 		return
+	# 绑环回的房间不广播：局域网里的人即使看到这个房间也连不上——房间的地址是
+	# 127.0.0.1，游戏端口也只在本机环回上监听。广播只会往别人的列表里塞一个假条目。
+	# 公网房间靠网关发现，不需要广播。
+	if _bind_ip.begins_with("127.") or _bind_ip == "::1":
+		print("[lan] 房间只绑在环回上（%s），不广播到局域网：对方应经网关 %s 加入" % [
+			_bind_ip, _join_hint(),
+		])
+		return
 	_discovery.announce(func() -> Dictionary:
 		return {
 			"name": _room_name,
@@ -423,8 +522,30 @@ func _start_announcing() -> void:
 
 
 func _on_menu_host_requested(room_name: String, port: int, kind: int) -> void:
+	if kind == Lobby.Kind.PUBLIC:
+		_create_public_room(room_name)
+		return
 	_room_kind = kind
 	_host_game(room_name, port, false, true)
+
+
+## 「创建房间 → 公网」。
+##
+## 它**不是在本机开服务端**：公网房间必须开在一台有公网地址的机器上（见
+## docs/公网房间方案.md）。因此这里走的是"连到官方网关，由它分配一个房间"，
+## 与列表里点「官方房间」是同一个网络动作。区别只在界面怎么描述这件事，
+## 以及房间里的人从哪来（网关把下一个人也分到这个房间）。
+##
+## 代价要说清楚：房间名是官方服务端给的，玩家在这里填的名字用不上（服务端不知道）。
+## 想让玩家自己命名，需要把名字随握手一起发（方案文档里的 ②b，要自定义 peer）。
+func _create_public_room(room_name: String) -> void:
+	_room_kind = Lobby.Kind.PUBLIC
+	var host := ProductConfig.official_host()
+	var port := ProductConfig.official_port()
+	print("[session] 创建公网房间：经官方网关 %s:%d 分配（本机填的名字「%s」由服务端忽略）" % [
+		host, port, room_name,
+	])
+	_begin_join(host, port, true)
 
 
 func _on_menu_join_requested(address: String, port: int) -> void:
@@ -443,11 +564,15 @@ func _unhandled_input(event: InputEvent) -> void:
 ## 对方应当填的 "地址:端口"。优先用 `--advertise` 给的值，否则用本机的局域网地址。
 ## 存在的理由：云服务器上 IP.get_local_addresses() 只有 VPC 私网地址（172.16.x.x），
 ## 对外没有意义；而公网地址是 NAT 映射的，网卡上根本不存在，程序无从得知。
+##
+## `--advertise` 允许带端口（"host:port"）。公网房间必须这么给：它自己监听的是
+## 40000 段的一个环回端口，而对方该填的是**网关**的 27015，两者不同，
+## 所以不能让这里用 _port 去拼。局域网仍然只给地址，端口取本机实际监听的那个。
 func _join_hint() -> String:
+	if not _advertise.is_empty():
+		return _advertise if _advertise.contains(":") else "%s:%d" % [_advertise, _port]
 	if _port <= 0:
 		return ""
-	if not _advertise.is_empty():
-		return "%s:%d" % [_advertise, _port]
 	for address in _lan_addresses():
 		return "%s:%d" % [address, _port]
 	return ""
@@ -482,6 +607,10 @@ func _on_peer_connected(id: int) -> void:
 	print("[session] peer %d 已连接" % id)
 	# 只有服务端负责生成角色，其余 peer 等生成包到达即可。
 	if Net.is_server():
+		# 加入顺序要**先记**：host_id() 取的是第一个还在线的人，
+		# 而下面那句 _broadcast_lobby() 会把它写进下发的名单里。
+		if not _join_order.has(id):
+			_join_order.append(id)
 		# 槽位在**连接的那一刻**就分配，而不是等到开局。理由是大厅要显示
 		# 「谁是熔、谁是霜」（元素由槽位推出来，见 _element_for）；
 		# 等到开局才分的话，大厅里只能显示一串没有意义的 peer 号。
@@ -501,12 +630,36 @@ func _on_peer_disconnected(id: int) -> void:
 	# 同样只有服务端负责销毁；这次销毁由 MultiplayerSpawner 同步给其余 peer。
 	if Net.is_server():
 		_slots.erase(id)
+		# 退出的若是房主，host_id() 会自动交给下一个还在线的人（见它的实现）。
+		# 这就是为什么房主不能是一个固定下发过一次的 id。
+		_join_order.erase(id)
 		_game.on_peer_left(id)
 		var player := _players.get_node_or_null(_peer_node_name(id))
 		if player != null:
 			player.queue_free()
 	_broadcast_lobby()
+	# 房间里一个人都不剩时回到空闲状态，等下一批人。
+	#
+	# **公网房间必须这样做。** 它们由网关按需使用，而一个"用过一次就永远停在对局中"
+	# 的房间会让整个房间池在第一次对局之后就失效：后面连进来的人会被直接塞进一个
+	# 已经开始的关卡（大厅不下发、一上来就生成角色，而客户端那边的表现是
+	# 一直卡在「正在等待房间信息」）。
+	# 实测踩到过：一次成功的对局之后该房间就再也不发大厅名单，看着像网关坏了。
+	if Net.is_server() and _via_lobby and multiplayer.get_peers().is_empty():
+		_reset_to_lobby()
 	_refresh_status()
+
+
+## 把房间收回空闲状态：清掉这一局留下的一切，重新打开大厅等下一批玩家。
+## 走的是与首次进大厅完全相同的那条路径（_show_lobby），因此两处的状态不会分叉。
+func _reset_to_lobby() -> void:
+	_game_started = false
+	# 加入顺序必须清掉：房主是"第一个进来的人"，而上一局的顺序留着的话，
+	# 下一批人里会有一个早就不在房间里的 peer 被认成房主 —— 于是谁也点不了开始。
+	_join_order.clear()
+	_clear_players()
+	print("[lobby] 房间已回到空闲状态，等下一批玩家")
+	_show_lobby()
 
 
 ## MultiplayerSpawner 的生成函数。各端都会用同一份参数调用它，
@@ -716,9 +869,22 @@ func _rpc_game_started() -> void:
 ## 「两端各持一份名单、其中一份落后了」这种 bug 的代价。
 @rpc("authority", "call_remote", "reliable")
 func _rpc_lobby_info(info: Dictionary) -> void:
-	if _lobby == null:
+	_apply_lobby(info)
+
+
+## 客户端向服务端请求开局（公网房间里房主是个普通客户端，见 _on_lobby_start_requested）。
+##
+## `any_peer` 是必须的：发起者不是权威节点。因此**服务端必须自己校发送者**，
+## 不能假定“能调到我这个方法的都是好人”——否则任何一个客户端都能把全房间拉进对局。
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_start() -> void:
+	if not Net.is_server():
 		return
-	_lobby.apply(_with_local_flags(info))
+	var sender := multiplayer.get_remote_sender_id()
+	if sender != host_id():
+		print("[session] 忽略 peer %d 的开局请求：房主是 peer %d" % [sender, host_id()])
+		return
+	_start_game()
 
 
 # ---------------------------------------------------------------- 状态显示

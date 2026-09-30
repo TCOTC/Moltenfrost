@@ -44,6 +44,10 @@ const HELP = `熔霜 · 部署到联机服务器
   --advertise <地址>   服务端对外公布的地址（域名或 IP）。云服务器上程序拿到的只有 VPC 私网地址，
                        因此必须显式指定，否则服务端日志里"对方加入时填"那一行没有意义
   --enable-service     安装并启用 systemd 服务（默认只装好不启动）
+  --gateway            公网房间模式：编译并安装 UDP 网关。对外只开 --port 一个 UDP 端口，
+                       房间实例绑环回、跑在 --room-base-port 起的连续端口上（见 docs/公网房间方案.md）
+  --rooms-count <N>    网关托管几个房间，默认 2
+  --room-base-port <端口>  房间端口的起点，默认 40001。**不要用 27016**，那是局域网探测端口
   --skip-godot         跳过 Godot 的下载与安装（服务器上已有时用）
   --skip-import        跳过资源导入（仅调试脚本时用，正常部署不要加）
   --dry-run            只打印计划，不执行
@@ -59,6 +63,9 @@ function parseArgs(argv) {
     port: 27015,
     advertise: process.env.MOLTENFROST_HOST || null,
     enableService: false,
+    gateway: false,
+    roomsCount: 2,
+    roomBasePort: 40001,
     skipGodot: false,
     skipImport: false,
     dryRun: false,
@@ -79,6 +86,9 @@ function parseArgs(argv) {
       case "--port": opts.port = Number(next()); break;
       case "--advertise": opts.advertise = next(); break;
       case "--enable-service": opts.enableService = true; break;
+      case "--gateway": opts.gateway = true; break;
+      case "--rooms-count": opts.roomsCount = Number(next()); break;
+      case "--room-base-port": opts.roomBasePort = Number(next()); break;
       case "--skip-godot": opts.skipGodot = true; break;
       case "--skip-import": opts.skipImport = true; break;
       case "--dry-run": opts.dryRun = true; break;
@@ -256,6 +266,10 @@ async function main() {
     "--port", String(opts.port),
   ];
   if (opts.advertise) remoteArgs.push("--advertise", opts.advertise);
+  if (opts.gateway) {
+    remoteArgs.push("--gateway", "--rooms-count", String(opts.roomsCount),
+      "--room-base-port", String(opts.roomBasePort));
+  }
   if (!opts.skipGodot) remoteArgs.push("--godot-zip", "/tmp/godot-linux.zip");
   if (opts.enableService) remoteArgs.push("--enable-service");
   if (opts.skipImport) remoteArgs.push("--skip-import");
@@ -271,10 +285,24 @@ async function main() {
     `对方加入时填：${reachable}:${opts.port}\n`,
   );
   if (opts.enableService) {
-    process.stdout.write(
-      `启动服务：ssh ${opts.user}@${opts.host} 'sudo systemctl enable --now moltenfrost@${opts.port}'\n` +
-      `看日志：  ssh ${opts.user}@${opts.host} 'journalctl -u moltenfrost@${opts.port} -f'\n`,
-    );
+    if (opts.gateway) {
+      // 网关模式下 27015 归网关，房间在 room-base-port 起的连续端口上。
+      // 逐个列出房间的启动命令，而不是给一句 "enable --now moltenfrost@*"：
+      // 后者不是合法的 systemd 写法，照着敲只会报 unit not found。
+      const rooms = Array.from({ length: opts.roomsCount }, (_, i) => opts.roomBasePort + i);
+      process.stdout.write(
+        `启动网关上每一件（端口 ${opts.port} 现在归网关）：\n` +
+        `  sudo systemctl enable --now moltenfrost-gateway\n` +
+        rooms.map((p) => `  sudo systemctl enable --now moltenfrost@${p}`).join("\n") + "\n" +
+        `若旧的单房间服务还占着 ${opts.port}，先：sudo systemctl disable --now moltenfrost@${opts.port}\n` +
+        `看日志：  ssh ${opts.user}@${opts.host} 'journalctl -u moltenfrost-gateway -f'\n`,
+      );
+    } else {
+      process.stdout.write(
+        `启动服务：ssh ${opts.user}@${opts.host} 'sudo systemctl enable --now moltenfrost@${opts.port}'\n` +
+        `看日志：  ssh ${opts.user}@${opts.host} 'journalctl -u moltenfrost@${opts.port} -f'\n`,
+      );
+    }
   }
 }
 

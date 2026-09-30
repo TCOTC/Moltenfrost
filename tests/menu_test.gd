@@ -185,22 +185,31 @@ func _case_actions() -> void:
 		_ok(int(_host_calls[0][1]) == MENU_PORT, "端口应当取自输入框，实际 %d" % int(_host_calls[0][1]))
 		_ok(int(_host_calls[0][2]) == Lobby.Kind.LAN, "默认应当是局域网类型，实际 %d" % int(_host_calls[0][2]))
 
-	# 选公网：必须**不发信号**，只在状态栏说明。这一条锁的是“界面不假装功能已具备”——
-	# 真让它发出 host_requested，入口脚本会在本机开一个跨网连不上的房间，
-	# 而界面上它与真公网房间长得一模一样，事后极难看出是假的。
+	# 选公网：现在它是一条**能走的路**（经官方网关申请房间），因此应当发出 host_requested，
+	# 并且带上 PUBLIC 类型。端口不参与（传 0）：公网房间开在官方服务器上，本机这个端口用不上，
+	# 所以这一条也不该因为端口框里是垃圾而被拦住。
 	_button("KindRow/Public").button_pressed = true
-	_line("HostRow/RoomName").text = CUSTOM_ROOM_NAME
+	_ok(not _line("HostRow/RoomName").editable, "选公网后房间名那一格应当锁上（名字由官方服务器给）")
+	_line("PortRow/Port").text = NOT_A_PORT
 	_button("HostRow/Host").pressed.emit()
-	_ok(_host_calls.size() == 1, "选公网时创建房间不应当再发一次 host_requested，实际共 %d 次" % _host_calls.size())
-	_ok(_status().text.contains("公网"), "选公网时状态栏应当说明它需要官方服务端，实际「%s」" % _status().text)
+	_ok(_host_calls.size() == 2, "选公网后点创建应当再发一次 host_requested，实际共 %d 次" % _host_calls.size())
+	if _host_calls.size() == 2:
+		_ok(int(_host_calls[1][2]) == Lobby.Kind.PUBLIC, "公网创建应当带上 PUBLIC 类型，实际 %d" % int(_host_calls[1][2]))
+		_ok(int(_host_calls[1][1]) == 0, "公网创建不应当依赖本机端口，实际传了 %d" % int(_host_calls[1][1]))
 	_ok(_label("KindHint").text.contains("公网"), "类型说明行应当跟着切到公网的说明")
 
-	# 切回局域网：再点一次应当能正常创建，且带上的类型是局域网。
+	# 切回局域网：房间名那一格要重新可编辑，并且再点一次应当能正常创建。
+	# 先解除忙碌状态：创建进行中时所有输入都被锁着，而真人要等到连接有结果才能改，
+	# 因此不解除就直接切类型并不反映真实路径。
+	_menu.set_message("自检：解除忙碌")
 	_button("KindRow/Lan").button_pressed = true
+	_ok(_line("HostRow/RoomName").editable, "切回局域网后房间名那一格应当恢复可编辑")
+	_line("PortRow/Port").text = str(MENU_PORT)
 	_button("HostRow/Host").pressed.emit()
-	_ok(_host_calls.size() == 2, "切回局域网后应当能再次创建房间，实际共 %d 次" % _host_calls.size())
-	if _host_calls.size() == 2:
-		_ok(int(_host_calls[1][2]) == Lobby.Kind.LAN, "切回局域网后应当带上局域网类型，实际 %d" % int(_host_calls[1][2]))
+	_ok(_host_calls.size() == 3, "切回局域网后应当能再次创建房间，实际共 %d 次" % _host_calls.size())
+	if _host_calls.size() == 3:
+		_ok(int(_host_calls[2][2]) == Lobby.Kind.LAN, "切回局域网后应当带上局域网类型，实际 %d" % int(_host_calls[2][2]))
+		_ok(int(_host_calls[2][1]) == MENU_PORT, "局域网创建应当用本机端口，实际 %d" % int(_host_calls[2][1]))
 
 	# 手动加入：地址与端口都取自输入框。
 	# 计数用"调用前先记一笔"的方式，不写死序号——上一个阶段已经发过两次 join_requested，

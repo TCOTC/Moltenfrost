@@ -84,7 +84,9 @@ func _ready() -> void:
 	_lan_kind.button_pressed = true
 	_lan_kind.toggled.connect(func(on: bool) -> void: if on: _set_room_kind(Lobby.Kind.LAN))
 	_pub_kind.toggled.connect(func(on: bool) -> void: if on: _set_room_kind(Lobby.Kind.PUBLIC))
-	_refresh_kind_hint()
+	# 走同一条设置路径而不是直接 _refresh_kind_hint()：房间名那一格的锁状态也归它管，
+	# 两条路会分成两种初始状态。
+	_set_room_kind(Lobby.Kind.LAN)
 	# 探测逻辑是界面自己的子节点：界面关掉就不再接收广播，也就不会占用探测端口。
 	_discovery = LanDiscovery.new()
 	_discovery.rooms_changed.connect(_on_rooms_changed)
@@ -140,22 +142,23 @@ func _on_refresh_pressed() -> void:
 	_start_probing()
 
 
-## 创建房间：把房间名、端口与公开类型交给入口脚本，由它决定怎么启动服务端。
+## 创建房间。局域网在本机开服务端；公网是连到官方网关、由它分配一个房间
+## （见 scripts/main.gd 的 _create_public_room）。两者都只发信号，怎么启动由入口脚本决定。
 func _on_host_pressed() -> void:
-	var port := _parse_port()
-	if port <= 0:
-		return
-	if _room_kind == Lobby.Kind.PUBLIC:
-		# 公网房间要开在官方服务器上，而服务端那一侧还没有（见 docs/公网房间方案.md）。
-		# 这里如实说明，而不是在本机开一个表面叫“公网”的房间：
-		# 那种房间跨网根本连不上，而界面上它看起来与真公网房间一模一样。
-		_set_status("公网房间需要官方服务端支持，当前版本请选「局域网」。")
-		return
 	var room_name := _room_name.text.strip_edges()
 	if room_name.is_empty():
 		room_name = LanDiscovery.default_room_name()
 	# 写回界面，让玩家看到实际生效的房间名。
 	_room_name.text = room_name
+	if _room_kind == Lobby.Kind.PUBLIC:
+		# 这一条不校验端口：公网房间开在官方服务器上，本机这个端口根本用不上，
+		# 而因为它填错就不让创建会让人莫名其妙。
+		_set_busy("正在向官方服务器申请房间…")
+		host_requested.emit(room_name, 0, _room_kind)
+		return
+	var port := _parse_port()
+	if port <= 0:
+		return
 	_set_busy("正在创建房间…")
 	host_requested.emit(room_name, port, _room_kind)
 
@@ -184,14 +187,21 @@ func _on_direct_pressed() -> void:
 ## 切换公开类型。只改状态与那行说明，不发信号——发信号是点「创建房间」时的事。
 func _set_room_kind(kind: int) -> void:
 	_room_kind = kind
+	# 公网房间的名字由官方服务端给（它不知道本机填了什么），因此这一格在公网下锁上。
+	# 留着一个填了但不生效的输入框是最差的一种：玩家会以为房间名是他定的。
+	# `not _busy` 那一半是必要的：创建进行中时所有输入都被锁着，
+	# 而这里若只按类型判断，会把那一格在这一刻意外解锁。
+	_room_name.editable = kind != Lobby.Kind.PUBLIC and not _busy
 	_refresh_kind_hint()
 
 
 ## 类型说明。两个选项各有一句“选了会怎么样”，而不是只给一个名字：
-## “公网/局域网”对不熟悉网络的人来说不是自明的，尤其是跨网时能不能连上这件事。
+## “公网/局域网”对不熟悉网络的人来说不是自明的，尤其是跨网时能不能加入这件事。
+## 公网那句还要说清一个容易被误解的点：那个按钮不是在“本机开服”，
+## 玩家拿到的是官方服务器上的一间房。
 func _refresh_kind_hint() -> void:
 	if _room_kind == Lobby.Kind.PUBLIC:
-		_kind_hint.text = "公网 · 房间开在官方服务器上，跨网也能加入。服务端支持尚未接入（见 docs/公网房间方案.md），当前版本请选「局域网」。"
+		_kind_hint.text = "公网 · 房间开在官方服务器上，跨网也能加入。你会进入一间空房并成为房主，别人选「官方房间」时会与你分到同一间（房间名由服务器给，因此上面那一格已锁上）。"
 	else:
 		_kind_hint.text = "局域网 · 房间开在本机，同一局域网里的人在左侧列表里就能看到它。"
 
@@ -363,6 +373,9 @@ func _set_inputs_enabled(enabled: bool) -> void:
 		else:
 			(node as Button).disabled = not enabled
 	if enabled:
+		# 解除锁定时要把公网下该锁的那一格重新锁上：上面那个循环是“一刀切”，
+		# 而房间名在公网下始终不可编辑（理由见 _set_room_kind）。
+		_room_name.editable = _room_kind != Lobby.Kind.PUBLIC
 		_update_join_enabled()
 
 
