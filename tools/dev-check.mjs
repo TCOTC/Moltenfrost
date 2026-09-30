@@ -246,6 +246,19 @@ function tail(text, lines = 14) {
   return arr.slice(-lines).join("\n");
 }
 
+// 失败时只看末尾几行会漏掉最该看的那一句：子工具把「哪几条断言不成立」
+// （`FAIL (N): …`）打在更靠上的位置，后面还接着它自己的日志。
+// 实测因此出现过"日志里只剩有断言不成立，看不到是哪一条"（net-smoke 那边同类，
+// 白跑三轮）。所以除了末尾若干行，再把判定行与错误行一并附上。
+function diag(text, lines = 14) {
+  const arr = String(text || "").split(/\r?\n/).filter((l) => l.trim());
+  const picked = arr.filter((l) =>
+    /^(FAIL|ok\s|---)|SCRIPT ERROR|Parse Error|Traceback|^\[[a-z]+\]|!!/.test(l));
+  const pickedText = picked.join("\n");
+  const tailText = tail(text, lines);
+  return pickedText === tailText ? tailText : `${tailText}\n--- 判定行 / 错误行 ---\n${pickedText}`;
+}
+
 // 跑一项。返回 { ok, seconds, output, note }。
 function runCheck(check, godot) {
   const startedAt = Date.now();
@@ -347,9 +360,10 @@ function main() {
     if (opts.verbose) process.stdout.write(`${r.output}\n`);
   }
 
-  // 失败时把输出尾部打出来。**不截断到只剩一行**：多数失败要靠上下文才能定位。
+  // 失败时把输出尾部与判定行打出来。**不截断到只剩几行**：多数失败要靠上下文才能定位，
+  // 而"哪几条断言不成立"那句往往就在被截掉的那一段里。
   for (const f of failed) {
-    process.stdout.write(`\n--- ${f.check.id} 失败（${f.note}）最后几行 ---\n${tail(f.output)}\n`);
+    process.stdout.write(`\n--- ${f.check.id} 失败（${f.note}）---\n${diag(f.output)}\n`);
   }
 
   const total = timings.reduce((s, t) => s + t.seconds, 0);

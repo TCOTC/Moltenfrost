@@ -108,10 +108,74 @@ async function waitFor(predicate, timeoutMs, label) {
 
 const count = async (includeIdle) => ((await tryListing(includeIdle)) || []).length;
 
+// ---------------------------------------------------------------- 端口占用
+//
+// 本检查用的是**固定端口**（目录 27117、房间 41101..41103），因为断言里要写死
+// "第二次认领应当拿到 41102"这种具体端口。代价是上一次跑完留下的残留进程会让这一次
+// 以极难懂的方式失败——实测 2026-10-01：上次留下的一批 Godot 房间还占着 41101..41103，
+// 新池看到的是一批"不是自己拉起的"房间，于是认领返回陈旧的端口、7 条断言全错，
+// 还白等了 86 秒（日志里只有"不是本进程拉起的"，看不出是上一次没清干净）。
+//
+// 因此：开工前先确认这些端口是空的（不空就立刻报出 PID 与清理命令），
+// 收工时把还占着房间端口的残留进程收掉（Windows 上池被终止时来不及请房间退出，
+// 见下面 finally 里的说明）。**失败要能区分原因**，不能让人从 86 秒日志里猜。
+
+// 端口 → 占用它的进程。跨平台尽力而为：拿不到就返回空表，只影响提示的详细程度。
+function busyPortPids(ports) {
+  const want = new Set(ports);
+  const found = new Map();
+  const add = (pid, port) => {
+    if (!Number.isFinite(pid) || !want.has(port)) return;
+    found.set(pid, [...new Set([...(found.get(pid) || []), port])]);
+  };
+  if (process.platform === "win32") {
+    for (const proto of ["UDP", "TCP"]) {
+      const res = spawnSync("netstat", ["-ano", "-p", proto], { encoding: "utf8" });
+      for (const raw of String(res.stdout || "").split(/\r?\n/)) {
+        const parts = raw.trim().split(/\s+/);
+        if (parts[0] !== proto || parts.length < 4) continue;
+        // **只认"在监听"。** 关上一次的连接会以 TIME_WAIT（PID 0）在 netstat 里
+        // 留一阵子，那是正常的，而且不挡新监听；把它算成占用会让开工前的自检
+        // 在刚跑完一次之后立刻误报（实测踩到：报 PID 0 占着 27117 四十次）。
+        if (proto === "TCP" && parts[3] !== "LISTENING") continue;
+        const local = parts[1];
+        add(Number(parts[parts.length - 1]), Number(local.slice(local.lastIndexOf(":") + 1)));
+      }
+    }
+  } else {
+    const res = spawnSync("ss", ["-ltunp"], { encoding: "utf8" });
+    for (const raw of String(res.stdout || "").split(/\r?\n/)) {
+      const pid = raw.match(/pid=(\d+)/);
+      if (!pid) continue;
+      for (const port of raw.matchAll(/:(\d+)\s/g)) add(Number(pid[1]), Number(port[1]));
+    }
+  }
+  return found;
+}
+
+function describeBusy(busy) {
+  return [...busy.entries()].map(([pid, ports]) => `PID ${pid}（端口 ${ports.join(", ")}）`).join("；");
+}
+
+const ROOM_PORTS = Array.from({ length: MAX_ROOMS }, (_, i) => BASE_PORT + i);
+
 try {
   console.log(`Godot：${GODOT}`);
   console.log(`解释器：${PYTHON}`);
   console.log(`目录端口 ${DIR_PORT}，房间端口 ${BASE_PORT}..${BASE_PORT + MAX_ROOMS - 1}\n`);
+
+  // 开工前先看端口是不是空的。占用它的多半是上一次跑留下的残留（见上面的说明），
+  // 而那种情况下后面 7 条断言会以"池没有拉起备用房""认领拿到旧端口"的形式全错。
+  const busyAtStart = busyPortPids([DIR_PORT, ...ROOM_PORTS]);
+  if (busyAtStart.size > 0) {
+    console.error(
+      `端口已被占用：${describeBusy(busyAtStart)}\n` +
+      `它们多半是上一次本检查留下的残留（或开发中自己开的实例）。先清掉再跑：\n` +
+      `  Windows: Get-Process | Where-Object { \$_.ProcessName -match 'Godot' } | Stop-Process -Force\n` +
+      `  Linux:   pkill -f 'godot.*--port ${BASE_PORT}'`,
+    );
+    process.exit(1);
+  }
 
   launch(PYTHON, ["tools/room-directory.py", "--port", String(DIR_PORT), "--ttl", "6"], "目录");
   await waitFor(
@@ -193,6 +257,26 @@ try {
     if (entry.proc.exitCode === null) entry.proc.kill("SIGKILL");
   }
   await sleep(500);
+  // **把还占着房间端口的进程收掉。** Windows 上 Node 的 kill 不发信号（见上面第 6 节），
+  // 于是池被终止时来不及请房间自己退出，那些 Godot 房间会留成孤儿、继续占着
+  // 41101.. 的 UDP 端口 —— 下一次跑本检查就会以"不是本进程拉起的"那种形式全错。
+  // 这里按端口把它们收掉，让本检查可以反复跑（这正是它自己的烂摊子）。
+  const strays = busyPortPids(ROOM_PORTS);
+  if (strays.size > 0) {
+    console.log(`\n收掉还占着房间端口的残留进程：${describeBusy(strays)}`);
+    for (const pid of strays.keys()) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // 已经退出或没权限：不因为收尾失败而改变判定。
+      }
+    }
+    await sleep(500);
+    const leftover = busyPortPids(ROOM_PORTS);
+    if (leftover.size > 0) {
+      console.log(`  !! 还有进程占着房间端口（下次跑本检查会直接报端口占用）：${describeBusy(leftover)}`);
+    }
+  }
   if (failures.length) {
     for (const entry of children) {
       console.log(`\n--- ${entry.label} 最后 30 行 ---`);
